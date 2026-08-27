@@ -1,5 +1,15 @@
-import { RES_IDS, heroProduction } from '../gameData'
+import { RES_IDS, heroProduction, HERO_ITEMS, heroItemValue } from '../gameData'
 import { fmt } from '../calc'
+
+// What the equipped helmet does, in words, for the panel note. Only the training-
+// time helmets feed the model; the rest are shown but flagged as not wired.
+function itemEffectLabel(def, value, serverSpeed) {
+  if (def.stat === 'timeBarracks') return `−${value}% barracks training time (hero village)`
+  if (def.stat === 'timeStable') return `−${value}% stable training time (hero village)`
+  if (def.stat === 'health') return `+${value} HP/day · not modelled`
+  if (def.stat === 'culture') return `+${value * (serverSpeed || 1)} culture/day · already in the export`
+  return ''
+}
 
 // The hero occupies one village and adds flat resource production there. Every
 // resource has a base of 20; each attribute point adds 20 to a single chosen
@@ -13,10 +23,19 @@ const MODES = [
   { id: 'crop', label: 'All → Crop' },
 ]
 
-export default function Hero({ villages, premium, heroVillageId, heroPoints, heroMode, assignHero, setHeroPoints, setHeroMode }) {
+export default function Hero({ villages, premium, serverSpeed, heroVillageId, heroPoints, heroMode, heroItem, assignHero, setHeroPoints, setHeroMode, setHeroItem }) {
   const hv = villages.find((v) => v.id === heroVillageId)
   const prod = heroProduction(heroPoints, heroMode || 'all')
   const total = RES_IDS.reduce((s, r) => s + prod[r], 0)
+
+  const equipped = heroItemValue(heroItem)
+  // Equipping a helmet keeps its current variant/upgrades where sensible; a fresh
+  // pick starts at the middle variant (0) with no upgrades.
+  const pickItem = (id) => {
+    if (!id) return setHeroItem(null)
+    setHeroItem({ id, variant: heroItem?.id === id ? (heroItem.variant || 0) : 0, upgrades: heroItem?.id === id ? (heroItem.upgrades || 0) : 0 })
+  }
+  const patchItem = (patch) => setHeroItem({ id: heroItem.id, variant: heroItem?.variant || 0, upgrades: heroItem?.upgrades || 0, ...patch })
 
   return (
     <div className="content">
@@ -44,6 +63,51 @@ export default function Hero({ villages, premium, heroVillageId, heroPoints, her
             </select>
           </label>
         </div>
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
+          <h2>Equipment</h2>
+          <span className="spacer" />
+          {equipped && <span className="note">{itemEffectLabel(equipped.def, equipped.value, serverSpeed)}</span>}
+        </div>
+        <div className="row compact">
+          <label className="field" style={{ flex: 2 }}>
+            <span>Helmet</span>
+            <select value={heroItem?.id || ''} onChange={(e) => pickItem(e.target.value || null)}>
+              <option value="">— none —</option>
+              {HERO_ITEMS.map((h) => (
+                <option key={h.id} value={h.id}>{h.name}</option>
+              ))}
+            </select>
+          </label>
+          {equipped && (
+            <>
+              <label className="field fit">
+                <span>Variant (roll)</span>
+                <select value={heroItem.variant || 0} onChange={(e) => patchItem({ variant: Number(e.target.value) })}>
+                  {equipped.def.variants.map((val) => (
+                    <option key={val} value={val}>{val > 0 ? `+${val}` : val}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field fit">
+                <span>Upgrades</span>
+                <input type="number" min="0" value={heroItem.upgrades || 0}
+                  onChange={(e) => patchItem({ upgrades: Math.max(0, Number(e.target.value) || 0) })} />
+              </label>
+              <label className="field fit">
+                <span>Effective</span>
+                <input type="text" readOnly value={`${equipped.def.base} ${(heroItem.variant || 0) >= 0 ? '+' : '−'} ${Math.abs(heroItem.variant || 0)} + ${heroItem.upgrades || 0} = ${equipped.value}`} />
+              </label>
+            </>
+          )}
+        </div>
+        {equipped && (equipped.def.stat === 'health' || equipped.def.stat === 'culture') && (
+          <div className="note" style={{ marginTop: 8 }}>
+            This helmet doesn't change any calculation — only the Infantry and Cavalry helmets (barracks / stable training time) feed the model.
+          </div>
+        )}
       </div>
 
       {!hv ? (

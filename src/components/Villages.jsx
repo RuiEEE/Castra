@@ -229,7 +229,7 @@ function HostedBill({ v, troops }) {
 // The Healing Tent is its own thing, deliberately kept out of the army: these
 // units can't move and can't defend. They are closer to a build queue — crop
 // goes in, and resources bring them back.
-function HealingTent({ v, troops }) {
+function HealingTent({ v, troops, bonuses }) {
   // Two disjoint groups. `wounded` are idle: still injured, still eating, and
   // waiting for you to pay. The tent's queue holds the ones already paid for —
   // the export moves them out of the wounded stacks and into a healing queue, so
@@ -240,7 +240,7 @@ function HealingTent({ v, troops }) {
 
   const crop = countsUpkeep(v.wounded, troops, v) * WOUNDED_UPKEEP_FACTOR
   const total = hurt.reduce((s, t) => s + v.wounded[t.id], 0)
-  const bill = healCost(v.wounded, troops)
+  const bill = healCost(v.wounded, troops, bonuses)
   const returning = healing.reduce((s, q) => s + q.count, 0)
   const short = (id) => troops.find((t) => t.id === id)?.short || id
 
@@ -331,7 +331,7 @@ function Queues({ v, troops }) {
 }
 
 // --- Full-page editor -------------------------------------------------------
-function VillageEditor({ v, villages, troops, settings, delta, onEdit, onRemove, onBack }) {
+function VillageEditor({ v, villages, troops, settings, delta, bonuses, onEdit, onRemove, onBack }) {
   const gross = grossProduction(v, settings.premium)
   const { net, upkeep } = villageNet(v, troops, settings, delta)
   const maxLvl = fieldLevelMax(v)
@@ -586,7 +586,7 @@ function VillageEditor({ v, villages, troops, settings, delta, onEdit, onRemove,
           </div>
         </div>
 
-        <HealingTent v={v} troops={troops} />
+        <HealingTent v={v} troops={troops} bonuses={bonuses} />
 
         <Queues v={v} troops={troops} />
 
@@ -653,7 +653,7 @@ function VillageEditor({ v, villages, troops, settings, delta, onEdit, onRemove,
   )
 }
 
-export default function Villages({ villages, troops, settings, routes, setVillage, addVillage, importGameExport, removeVillage, reorderVillages }) {
+export default function Villages({ villages, troops, settings, routes, bonuses, setVillage, addVillage, importGameExport, removeVillage, reorderVillages }) {
   const [editingId, setEditingId] = useState(null)
   const [showImport, setShowImport] = useState(false)
   const [paste, setPaste] = useState('')
@@ -670,7 +670,7 @@ export default function Villages({ villages, troops, settings, routes, setVillag
   if (editing) {
     return (
       <VillageEditor
-        v={editing} villages={villages} troops={troops} settings={settings} delta={deltas[editing.id]}
+        v={editing} villages={villages} troops={troops} settings={settings} delta={deltas[editing.id]} bonuses={bonuses}
         onEdit={(patch) => setVillage(editing.id, patch)}
         onRemove={() => { removeVillage(editing.id); setEditingId(null) }}
         onBack={() => setEditingId(null)}

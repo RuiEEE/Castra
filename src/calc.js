@@ -1,6 +1,6 @@
 import {
   RES_IDS, WW_UPKEEP_FACTOR, WOUNDED_UPKEEP_FACTOR, HEAL_COST_FACTOR,
-  storageCapacity, totalCapacity,
+  storageCapacity, totalCapacity, heroItemValue,
 } from './gameData'
 import {
   CP_BUILDINGS, EXPANSION_CP, SMALL_CELEBRATION, LARGE_CELEBRATION,
@@ -239,14 +239,101 @@ export function troopUpkeep(village, troops) {
   return own + wounded + hosted
 }
 
+// --- Kingdom & account training bonuses -------------------------------------
+// Three stacking systems reduce what troops cost and how long they take to train:
+//   fealty    — per game world, grows with your fealty level (loyalty to a
+//               kingdom). Confirmed linear from the owner's in-game fealty screen.
+//   prestige  — account-wide (lobby). Each level UNLOCKS a fixed extra bonus that
+//               then stays flat; it does NOT scale with further levels. Confirmed
+//               up to level 8; higher unlocks unknown.
+//   hero item — the equipped helmet, and only in the village the hero sits in.
+// Percentages stack ADDITIVELY, the way the game displays them (fealty -8.5% +
+// prestige -1% = -9.5%), then apply to the base cost with floor rounding.
+export const TRAIN_BUILDINGS = ['barracks', 'stable', 'workshop', 'residence']
+
+// A no-op bonus set: every factor 1, no hero item. The default so the training
+// functions still work when called without kingdom bonuses (unwired tabs, tests).
+export const NO_BONUS = {
+  costFactor: { barracks: 1, stable: 1, workshop: 1, residence: 1 },
+  timeFactor: { barracks: 1, stable: 1, workshop: 1, residence: 1 },
+  healFactor: 1,
+  heroVillageId: null,
+  heroTimeFactor: { barracks: 1, stable: 1 },
+}
+
+// Fealty bonus %, by category, at a given fealty level (caps at 20). Each troop-
+// cost line is 0.5*level - 1 once unlocked (Workshop L8, Stable L9, Barracks +
+// Residence/Palace L10); training time is 0.5*level - 6 (Barracks L15, Stable
+// L16); Healing Tent cost is 0.5*level - 4.5 (L13). Confirmed in-game at L19.
+export function fealtyBonus(level) {
+  const L = Math.max(0, Math.min(level || 0, 20))
+  const at = (unlock, base) => (L >= unlock ? base + 0.5 * (L - unlock) : 0)
+  return {
+    cost: { workshop: at(8, 3), stable: at(9, 3.5), barracks: at(10, 4), residence: at(10, 4) },
+    time: { barracks: at(15, 1.5), stable: at(16, 2) },
+    heal: at(13, 2),
+  }
+}
+
+// Prestige bonus %, by category, at a given prestige level. Flat unlocks, not
+// scaling — active once prestige reaches the listed level. Confirmed to L8.
+export function prestigeBonus(level) {
+  const L = level || 0
+  const on = (unlock, amt) => (L >= unlock ? amt : 0)
+  return {
+    cost: { workshop: on(4, 1), stable: on(5, 1), barracks: on(5, 1), residence: on(5, 1) },
+    time: { barracks: on(8, 1), stable: on(8, 1) },
+    heal: on(7, 1),
+  }
+}
+
+// The equipped helmet's training-time reduction %, split by building. Only the
+// Infantry (Barracks) and Cavalry (Stable) helmets touch training time.
+export function heroItemTime(equipped) {
+  const e = heroItemValue(equipped)
+  if (!e) return { barracks: 0, stable: 0 }
+  if (e.def.stat === 'timeBarracks') return { barracks: e.value, stable: 0 }
+  if (e.def.stat === 'timeStable') return { barracks: 0, stable: e.value }
+  return { barracks: 0, stable: 0 }
+}
+
+// Fold fealty (per world) + prestige (account-wide) + the hero's helmet into one
+// set of multipliers the training functions read. Percentages sum, then become a
+// 1 - pct/100 multiplier applied to base cost/time.
+export function trainingBonuses(settings, prestige, heroVillageId, equipped) {
+  const f = fealtyBonus(settings?.fealty)
+  const p = prestigeBonus(prestige)
+  const costFactor = {}
+  const timeFactor = {}
+  for (const b of TRAIN_BUILDINGS) {
+    costFactor[b] = 1 - ((f.cost[b] || 0) + (p.cost[b] || 0)) / 100
+    timeFactor[b] = 1 - ((f.time[b] || 0) + (p.time[b] || 0)) / 100
+  }
+  const ht = heroItemTime(equipped)
+  return {
+    costFactor,
+    timeFactor,
+    healFactor: 1 - ((f.heal || 0) + (p.heal || 0)) / 100,
+    heroVillageId: heroVillageId || null,
+    heroTimeFactor: { barracks: 1 - (ht.barracks || 0) / 100, stable: 1 - (ht.stable || 0) / 100 },
+  }
+}
+
 // What it costs to bring a set of wounded units back: half the training cost,
-// per resource. Kingdoms charges no crop to train, so the crop slot stays 0.
-export function healCost(counts, troops) {
+// per resource. Kingdoms charges no crop to train, so the crop slot stays 0. The
+// half is taken off the fealty/prestige-reduced training cost, then the Healing
+// Tent's own fealty/prestige discount applies on top (healFactor) — an assumption
+// worth checking against a real in-game heal, since the two could overlap.
+export function healCost(counts, troops, bonuses = NO_BONUS) {
   const out = { wood: 0, clay: 0, iron: 0, crop: 0 }
   for (const t of troops) {
     const n = counts?.[t.id] || 0
     if (!n) continue
-    RES_IDS.forEach((r, i) => { out[r] += n * t.cost[i] * HEAL_COST_FACTOR })
+    const cf = bonuses.costFactor?.[t.building] ?? 1
+    RES_IDS.forEach((r, i) => {
+      const per = Math.floor((t.cost[i] || 0) * cf)
+      out[r] += n * per * HEAL_COST_FACTOR * (bonuses.healFactor ?? 1)
+    })
   }
   for (const r of RES_IDS) out[r] = Math.round(out[r])
   return out
@@ -568,7 +655,7 @@ export const trainingLevel = (village, building) =>
 // One entry per training building the village has a unit assigned to, with its
 // throughput and hourly resource demand. This is the unit of work the Production
 // tab and trainingDemand both build on — a village can appear up to three times.
-export function villageProducers(village, troops, settings) {
+export function villageProducers(village, troops, settings, bonuses = NO_BONUS) {
   const produces = village.produces || {}
   const out = []
   for (const building of TRAINABLE_BUILDINGS) {
@@ -576,15 +663,19 @@ export function villageProducers(village, troops, settings) {
     if (!id) continue
     const def = (troops || []).find((t) => t.id === id)
     if (!def) continue
-    const secs = trainTimeSeconds(def, village, settings)
+    const secs = trainTimeSeconds(def, village, settings, bonuses)
     const perHour = secs ? 3600 / secs : 0
+    // The unit's real per-item cost after the kingdom's training-cost discount,
+    // floored the way the game charges it (75 -> floor(75*0.905) = 67).
+    const cf = bonuses.costFactor?.[building] ?? 1
+    const unit = (i) => Math.floor((def.cost[i] || 0) * cf)
     out.push({
       def, building, secs, perHour, perDay: perHour * 24,
       level: trainingLevel(village, building),
       demand: {
-        wood: perHour * (def.cost[0] || 0),
-        clay: perHour * (def.cost[1] || 0),
-        iron: perHour * (def.cost[2] || 0),
+        wood: perHour * unit(0),
+        clay: perHour * unit(1),
+        iron: perHour * unit(2),
       },
       missing: !secs,
     })
@@ -594,9 +685,9 @@ export function villageProducers(village, troops, settings) {
 
 // What a village's training queues burn per hour, summed across every building
 // it trains in. Kingdoms charges no crop to train, so this is wood/clay/iron only.
-export function trainingDemand(village, troops, settings) {
+export function trainingDemand(village, troops, settings, bonuses = NO_BONUS) {
   const d = { wood: 0, clay: 0, iron: 0 }
-  for (const p of villageProducers(village, troops, settings)) {
+  for (const p of villageProducers(village, troops, settings, bonuses)) {
     for (const r of WCI) d[r] += p.demand[r]
   }
   return d
@@ -606,12 +697,12 @@ export function trainingDemand(village, troops, settings) {
 // that moves them: field production, the training queue, crop upkeep, and the
 // standing routes. This is what "does this route push the sender into the red"
 // has to be answered against, so the Routes tab and the Production tab agree.
-export function villageBalances(villages, troops, settings, routes) {
+export function villageBalances(villages, troops, settings, routes, bonuses = NO_BONUS) {
   const deltas = netDeltas(villages, troops, routes)
   const out = {}
   for (const v of villages || []) {
     const g = grossProduction(v, settings.premium)
-    const burn = trainingDemand(v, troops, settings)
+    const burn = trainingDemand(v, troops, settings, bonuses)
     const moved = deltas[v.id] || {}
     out[v.id] = {
       wood: g.wood * settings.serverSpeed - burn.wood + (moved.wood || 0),
@@ -854,14 +945,21 @@ export function sustainableRate(village, troops, settings, mix) {
 }
 
 // Training-time constraint. time = base * speedBase^(level-1), scaled by server.
-export function trainTimeSeconds(troopDef, village, settings) {
+export function trainTimeSeconds(troopDef, village, settings, bonuses = NO_BONUS) {
   const lvl = troopDef.building === 'barracks' ? village.barracks
     : troopDef.building === 'stable' ? village.stable
     : troopDef.building === 'workshop' ? village.workshop
     : 1
   if (!lvl || lvl < 1) return null
   const factor = Math.pow(settings.trainSpeedBase, lvl - 1)
-  return (troopDef.baseTrain * factor) / settings.serverSpeed
+  const b = troopDef.building
+  // Empire-wide fealty/prestige training-time cut, plus the hero's helmet — the
+  // helmet only helps the barracks/stable in the village the hero is standing in.
+  const empire = bonuses.timeFactor?.[b] ?? 1
+  const hero = bonuses.heroVillageId && village.id === bonuses.heroVillageId
+    ? (bonuses.heroTimeFactor?.[b] ?? 1)
+    : 1
+  return (troopDef.baseTrain * factor * empire * hero) / settings.serverSpeed
 }
 
 // --- Trade routing ----------------------------------------------------------

@@ -131,6 +131,7 @@ export default function App() {
             troops={store.troops}
             settings={store.settings}
             routes={store.routes}
+            bonuses={store.bonuses}
             setVillage={store.setVillage}
             addVillage={store.addVillage}
             importGameExport={store.importGameExport}
@@ -142,12 +143,15 @@ export default function App() {
           <Hero
             villages={store.villages}
             premium={store.settings.premium}
+            serverSpeed={store.settings.serverSpeed}
             heroVillageId={store.heroVillageId}
             heroPoints={store.heroPoints}
             heroMode={store.heroMode}
+            heroItem={store.heroItem}
             assignHero={store.assignHero}
             setHeroPoints={store.setHeroPoints}
             setHeroMode={store.setHeroMode}
+            setHeroItem={store.setHeroItem}
           />
         )}
         {tab === 'production' && (
@@ -156,6 +160,7 @@ export default function App() {
             troops={store.troops}
             settings={store.settings}
             routes={store.routes}
+            bonuses={store.bonuses}
             setVillage={store.setVillage}
           />
         )}
@@ -173,6 +178,7 @@ export default function App() {
             troops={store.troops}
             settings={store.settings}
             routes={store.routes}
+            bonuses={store.bonuses}
             addRoute={store.addRoute}
             updateRoute={store.updateRoute}
             removeRoute={store.removeRoute}
@@ -189,6 +195,8 @@ export default function App() {
           <Reference
             settings={store.settings}
             setSettings={store.setSettings}
+            prestige={store.prestige}
+            setPrestige={store.setPrestige}
             troops={store.troops}
             editTroop={store.editTroop}
             exportJSON={store.exportJSON}

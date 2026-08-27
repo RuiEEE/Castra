@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { DEFAULT_SETTINGS, TRIBES, emptyVillage, RES_IDS, heroProduction } from './gameData'
+import { trainingBonuses } from './calc'
 
 const KEY = 'castra.state.v1'
 
@@ -161,6 +162,9 @@ function emptyServer(tribe = 'romans', name) {
     heroVillageId: null,
     heroPoints: 0,
     heroMode: 'all',
+    // The hero's equipped helmet: { id, variant, upgrades } or null. Only the
+    // training-time helmets feed the model — see gameData.HERO_ITEMS.
+    heroItem: null,
   }
 }
 
@@ -181,12 +185,13 @@ function migrateServer(raw, fromVersion) {
     heroVillageId: raw.heroVillageId ?? null,
     heroPoints: raw.heroPoints ?? 0,
     heroMode: raw.heroMode ?? 'all',
+    heroItem: raw.heroItem ?? null,
   }
 }
 
 function freshState() {
   const srv = emptyServer('romans')
-  return { dataVersion: DATA_VERSION, servers: [srv], activeServerId: srv.id, migrated: false }
+  return { dataVersion: DATA_VERSION, servers: [srv], activeServerId: srv.id, migrated: false, prestige: 0 }
 }
 
 // Turn a raw saved (or imported) blob into live state. Handles both the new
@@ -205,7 +210,10 @@ function hydrate(saved) {
   const activeServerId = servers.some((s) => s.id === saved.activeServerId)
     ? saved.activeServerId
     : servers[0].id
-  return { dataVersion: DATA_VERSION, servers, activeServerId, migrated: stale }
+  // Prestige is a LOBBY (account-wide) level, so it sits at the top level, not
+  // inside a server. Older saves don't have it — default to 0.
+  const prestige = Math.max(0, Number(saved.prestige) || 0)
+  return { dataVersion: DATA_VERSION, servers, activeServerId, migrated: stale, prestige }
 }
 
 const initial = () => hydrate(load())
@@ -411,6 +419,16 @@ export function useStore() {
     updateActive((srv) => recomputeHero({ ...srv, heroMode }))
   }, [updateActive])
 
+  // The equipped helmet lives on the active server (the hero belongs to a world).
+  const setHeroItem = useCallback((heroItem) => {
+    updateActive((srv) => ({ ...srv, heroItem }))
+  }, [updateActive])
+
+  // Prestige is account-wide, so it edits the top-level state, not a server.
+  const setPrestige = useCallback((prestige) => {
+    setState((s) => ({ ...s, prestige: Math.max(0, Number(prestige) || 0) }))
+  }, [])
+
   // --- Server management -------------------------------------------------
   // A server is one game world with its own tribe, fixed at creation. Adding
   // one switches to it; removing the active one falls back to the first left.
@@ -471,12 +489,18 @@ export function useStore() {
 
   const active = state.servers.find((srv) => srv.id === state.activeServerId) || state.servers[0]
 
+  // Kingdom training multipliers, recomputed whenever fealty (per world),
+  // prestige (account-wide) or the equipped helmet change. Passed to the calc
+  // functions that price training so cost/time/heal reflect them everywhere.
+  const bonuses = trainingBonuses(active.settings, state.prestige, active.heroVillageId, active.heroItem)
+
   return {
     // Top-level multi-server state
     dataVersion: state.dataVersion,
     migrated: state.migrated,
     servers: state.servers,
     activeServerId: state.activeServerId,
+    prestige: state.prestige,
     // The active server's data, flattened so existing tabs read it as before.
     settings: active.settings,
     villages: active.villages,
@@ -486,10 +510,13 @@ export function useStore() {
     heroVillageId: active.heroVillageId,
     heroPoints: active.heroPoints,
     heroMode: active.heroMode,
+    heroItem: active.heroItem,
+    bonuses,
     // Actions
     setSettings, setVillage, addVillage, addVillageWith, importGameExport, removeVillage, reorderVillages,
     setTroops, editTroop, setMix, exportJSON, importJSON, resetAll, dismissMigration,
-    assignHero, setHeroPoints, setHeroMode, addRoute, updateRoute, removeRoute, parkTroops,
+    assignHero, setHeroPoints, setHeroMode, setHeroItem, setPrestige,
+    addRoute, updateRoute, removeRoute, parkTroops,
     addServer, removeServer, renameServer, setActiveServer,
   }
 }

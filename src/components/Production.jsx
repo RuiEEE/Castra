@@ -41,7 +41,7 @@ function trainLabel(secs) {
 const BUILDING_GID = { barracks: 19, stable: 20, workshop: 21 }
 const BUILDING_CLASS = { barracks: 'Infantry', stable: 'Cavalry', workshop: 'Siege' }
 
-export default function Production({ villages, troops, settings, routes, setVillage }) {
+export default function Production({ villages, troops, settings, routes, bonuses, setVillage }) {
   const tribe = TRIBES[settings.tribe] || TRIBES.romans
   const trainable = useMemo(() => troops.filter((t) => TRAINABLE_BUILDINGS.includes(t.building)), [troops])
   // Every per-village list on this tab reads in the game's own order.
@@ -62,8 +62,8 @@ export default function Production({ villages, troops, settings, routes, setVill
   // One entry per (village, training building) with a unit assigned — a village
   // running its barracks, stable and workshop at once shows up three times.
   const producers = useMemo(
-    () => villages.flatMap((v) => villageProducers(v, troops, settings).map((p) => ({ v, ...p }))),
-    [villages, troops, settings],
+    () => villages.flatMap((v) => villageProducers(v, troops, settings, bonuses).map((p) => ({ v, ...p }))),
+    [villages, troops, settings, bonuses],
   )
   const producingCount = useMemo(() => new Set(producers.map((p) => p.v.id)).size, [producers])
 

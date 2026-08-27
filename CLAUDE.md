@@ -102,12 +102,17 @@ Full editable knowledge base: `GAME_DATA.md`.
 
 ### Open questions — ask the owner, don't guess
 
-1. One unexplained training-time modifier. `base * 0.9^(level-1)` is now CONFIRMED for Kingdoms —
-   the export's `UnitQueue.durationPerUnit / baseTrain` falls 0.9002 per building level, identically
-   for every unit type. On top of it sits a flat ~3.35% global speedup of unknown cause. (The
-   further ~20% seen in Belas is SOLVED: the hero wears **Helmet of the Archon**, −19% infantry
-   training time in Barracks / Great Barracks / Healing Tents — 18% base plus a 1% upgrade. Hero
-   items are not modelled.)
+1. ~~One unexplained training-time modifier.~~ **SOLVED (2026-08-26).** `base * 0.9^(level-1)`
+   is CONFIRMED for Kingdoms — the export's `UnitQueue.durationPerUnit / baseTrain` falls 0.9002
+   per building level, identically for every unit type. The "flat ~3.35% global speedup of unknown
+   cause" seen on top of it was the **fealty training-time bonus** — empire-wide, `0.5·L − 6`%,
+   which at the owner's L18–19 gives ~3.35–3.5%. Confirmed by a real in-game data point: a
+   Praetorian in the capital takes **3m05s**, and the model lands 185.8s (3m06s) using fealty −3.5%
+   × Archon −19% with **no** extra factor — an independent 3.35% on top would predict ~3m00s, under
+   the game figure. So there is no leftover mystery modifier; it is now modelled by
+   `calc.fealtyBonus`. (The further ~20% seen in Belas was already solved: the hero's **Helmet of
+   the Archon**, −19% infantry training time in the hero village — now modelled too, see
+   `calc.trainingBonuses` / Hero tab Equipment panel.)
 2. The exact Horse Drinking Trough level where Equites Legati / Imperatoris first get their −1.
    Known to be active by 15, but the levels below that are untested.
 

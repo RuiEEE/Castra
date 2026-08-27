@@ -26,7 +26,7 @@ function destOptions(villages, wonders) {
   ]
 }
 
-export default function Routes({ villages, troops, settings, routes, addRoute, updateRoute, removeRoute }) {
+export default function Routes({ villages, troops, settings, routes, bonuses, addRoute, updateRoute, removeRoute }) {
   const tribe = TRIBES[settings.tribe] || TRIBES.romans
   const [editingId, setEditingId] = useState(null)
 
@@ -39,8 +39,8 @@ export default function Routes({ villages, troops, settings, routes, addRoute, u
   // only too big when it takes its SOURCE below zero; where the resource came
   // from doesn't matter, which is what lets a relay village work.
   const balances = useMemo(
-    () => villageBalances(villages, troops, settings, routes),
-    [villages, troops, settings, routes],
+    () => villageBalances(villages, troops, settings, routes, bonuses),
+    [villages, troops, settings, routes, bonuses],
   )
   const balanceOf = (id, res) => balances[id]?.[res] ?? 0
 

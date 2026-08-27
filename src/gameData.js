@@ -368,6 +368,49 @@ export const DEFAULT_SETTINGS = {
   popEatsCrop: true,
   trainSpeedBase: 0.9,
   premium: false, // account-wide gold bonus: +25% production & storage capacity
+  // Fealty level for THIS world (loyalty to your kingdom). Grows over time and
+  // reduces troop cost / training time / healing cost — see calc.fealtyBonus.
+  fealty: 0,
+}
+
+// Hero equipment (Travian Kingdoms). A helmet slot; each helmet family has three
+// tiers, unlocked as the game progresses. ONLY the training-time helmets change
+// any number the app computes — Infantry cuts Barracks time, Cavalry cuts Stable
+// time, and only in the village the hero is standing in. Health and Culture
+// helmets are catalogued for completeness but deliberately NOT wired: hero health
+// isn't modelled, and culture CP already arrives on the game export (adding it
+// here would double-count it on the Culture tab).
+//
+// A dropped helmet rolls a variant offset on its base value (usually one of
+// -2..+2 for training/health, larger steps for culture), and each upgrade adds
+// one more point. So a worst-roll Helmet of the Archon (base 20, variant -2)
+// with a single upgrade gives -19% Barracks training time. `stat` is what it
+// touches: timeBarracks / timeStable (% training time), health (HP/day), or
+// culture (CP/day, multiplied by server speed).
+export const HERO_ITEMS = [
+  { id: 'regeneration',  name: 'Helmet of Regeneration',      family: 'health',   tier: 1, stat: 'health',      base: 10,  variants: [-2, -1, 0, 1, 2] },
+  { id: 'health',        name: 'Helmet of Health',           family: 'health',   tier: 2, stat: 'health',      base: 15,  variants: [-2, -1, 0, 1, 2] },
+  { id: 'healing',       name: 'Helmet of Healing',          family: 'health',   tier: 3, stat: 'health',      base: 20,  variants: [-2, -1, 0, 1, 2] },
+  { id: 'gladiator',     name: 'Helmet of the Gladiator',    family: 'culture',  tier: 1, stat: 'culture',     base: 50,  variants: [-20, -10, 0, 10, 20] },
+  { id: 'tribune',       name: 'Helmet of the Tribune',      family: 'culture',  tier: 2, stat: 'culture',     base: 200, variants: [-50, -25, 0, 25, 50] },
+  { id: 'consul',        name: 'Helmet of the Consul',       family: 'culture',  tier: 3, stat: 'culture',     base: 800, variants: [-200, -100, 0, 100, 200] },
+  { id: 'horseman',      name: 'Helmet of the Horseman',     family: 'cavalry',  tier: 1, stat: 'timeStable',   base: 10,  variants: [-2, -1, 0, 1, 2] },
+  { id: 'cavalry',       name: 'Helmet of the Cavalry',      family: 'cavalry',  tier: 2, stat: 'timeStable',   base: 15,  variants: [-2, -1, 0, 1, 2] },
+  { id: 'heavy_cavalry', name: 'Helmet of the Heavy Cavalry', family: 'cavalry', tier: 3, stat: 'timeStable',   base: 20,  variants: [-2, -1, 0, 1, 2] },
+  { id: 'mercenary',     name: 'Helmet of the Mercenary',    family: 'infantry', tier: 1, stat: 'timeBarracks', base: 10,  variants: [-2, -1, 0, 1, 2] },
+  { id: 'warrior',       name: 'Helmet of the Warrior',      family: 'infantry', tier: 2, stat: 'timeBarracks', base: 15,  variants: [-2, -1, 0, 1, 2] },
+  { id: 'archon',        name: 'Helmet of the Archon',       family: 'infantry', tier: 3, stat: 'timeBarracks', base: 20,  variants: [-2, -1, 0, 1, 2] },
+]
+
+export const heroItemDef = (id) => HERO_ITEMS.find((h) => h.id === id) || null
+
+// Effective magnitude of an equipped helmet: base + variant offset + upgrades.
+// Returns { def, value } or null when nothing is equipped / the id is unknown.
+export function heroItemValue(equipped) {
+  if (!equipped) return null
+  const def = heroItemDef(equipped.id)
+  if (!def) return null
+  return { def, value: def.base + (equipped.variant || 0) + (equipped.upgrades || 0) }
 }
 
 // Max resource-field level by village kind. Capital is effectively uncapped;

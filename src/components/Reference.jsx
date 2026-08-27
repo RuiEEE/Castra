@@ -1,4 +1,5 @@
 import { RES_IDS, TRIBES, SRC_LABEL } from '../gameData'
+import { fealtyBonus, prestigeBonus } from '../calc'
 
 function SrcChip({ src, label }) {
   if (src === 'user') return <span className="chip good" title={SRC_LABEL.user}>yours</span>
@@ -7,7 +8,7 @@ function SrcChip({ src, label }) {
 }
 
 export default function Reference({
-  settings, setSettings, troops, editTroop,
+  settings, setSettings, prestige, setPrestige, troops, editTroop,
   exportJSON, importJSON, resetAll,
 }) {
   const editCost = (t, i, val) => {
@@ -19,6 +20,12 @@ export default function Reference({
   const unconfirmed = troops.filter((t) => t.src === 't4')
   const conflicted = troops.filter((t) => t.conflict)
   const tribe = TRIBES[settings.tribe] || TRIBES.romans
+
+  // Combined troop-cost reduction the two loyalty systems currently give, per
+  // training building — fealty (this world) + prestige (account-wide), summed.
+  const f = fealtyBonus(settings.fealty)
+  const p = prestigeBonus(prestige)
+  const costCut = (b) => (f.cost[b] || 0) + (p.cost[b] || 0)
 
   return (
     <>
@@ -58,6 +65,21 @@ export default function Reference({
             <input type="checkbox" checked={settings.premium} onChange={(e) => setSettings({ premium: e.target.checked })} />
             <span style={{ margin: 0 }}>Premium — account-wide +25% production &amp; storage</span>
           </label>
+        </div>
+        <div className="row compact" style={{ marginTop: 12 }}>
+          <label className="field fit">
+            <span>Fealty level (this world)</span>
+            <input type="number" min="0" max="20" step="1" value={settings.fealty || 0}
+              onChange={(e) => setSettings({ fealty: Math.max(0, Math.min(20, Number(e.target.value) || 0)) })} />
+          </label>
+          <label className="field fit">
+            <span>Prestige level (account-wide)</span>
+            <input type="number" min="0" step="1" value={prestige || 0}
+              onChange={(e) => setPrestige(e.target.value)} />
+          </label>
+          <span className="note" style={{ alignSelf: 'flex-end' }}>
+            Troop cost −{costCut('barracks')}% barracks · −{costCut('stable')}% stable · −{costCut('workshop')}% workshop
+          </span>
         </div>
       </div>
 
