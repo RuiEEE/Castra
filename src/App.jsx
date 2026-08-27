@@ -8,6 +8,7 @@ import Crop from './components/Crop'
 import Routes from './components/Routes'
 import CulturePoints from './components/CulturePoints'
 import Reference from './components/Reference'
+import Changelog from './components/Changelog'
 
 const TABS = [
   { id: 'villages', label: 'Villages' },
@@ -205,6 +206,8 @@ export default function App() {
           />
         )}
       </main>
+
+      <Changelog />
     </div>
   )
 }
