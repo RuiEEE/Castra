@@ -1,8 +1,14 @@
 import { useState } from 'react'
 
-export const VERSION = '1.0.1'
+export const VERSION = '1.0.2'
 
 const CHANGELOG = [
+  {
+    version: '1.0.2',
+    changes: [
+      'Fixed hero production when all points go to one resource — the base 20 of each resource now goes to the chosen one (2,080 crop/h at 100 points, was 2,020).',
+    ],
+  },
   {
     version: '1.0.1',
     changes: [

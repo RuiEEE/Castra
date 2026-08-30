@@ -444,21 +444,24 @@ export function newOasis() {
   return { pct: 25, flat: 0, slots: [{ res: 'crop' }] }
 }
 
-// Hero resource production (owner-confirmed): every resource has a base of 20,
-// plus each attribute point adds 20 to one chosen resource, or 5 to each when
-// split evenly across all four. mode = 'all' | 'wood' | 'clay' | 'iron' | 'crop'.
+// Hero resource production (owner-confirmed): the hero has a base of 20 per
+// resource, and each attribute point adds 20. Picking a single resource pools
+// the WHOLE base into it (4 x 20 = 80) and the other three produce nothing;
+// splitting spreads both base and points evenly (20 each + 5 per point).
+// mode = 'all' | 'wood' | 'clay' | 'iron' | 'crop'.
 export const HERO_BASE = 20
 export const HERO_PER_POINT_SINGLE = 20
 export const HERO_PER_POINT_SPLIT = 5
 
 export function heroProduction(points, mode) {
   const p = Math.max(0, points || 0)
-  const out = { wood: HERO_BASE, clay: HERO_BASE, iron: HERO_BASE, crop: HERO_BASE }
-  if (mode === 'all') {
-    for (const r of RES_IDS) out[r] += p * HERO_PER_POINT_SPLIT
-  } else if (out[mode] != null) {
-    out[mode] += p * HERO_PER_POINT_SINGLE
+  if (mode !== 'all' && RES_IDS.includes(mode)) {
+    const out = { wood: 0, clay: 0, iron: 0, crop: 0 }
+    out[mode] = HERO_BASE * RES_IDS.length + p * HERO_PER_POINT_SINGLE
+    return out
   }
+  const out = { wood: HERO_BASE, clay: HERO_BASE, iron: HERO_BASE, crop: HERO_BASE }
+  for (const r of RES_IDS) out[r] += p * HERO_PER_POINT_SPLIT
   return out
 }
 
