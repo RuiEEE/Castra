@@ -1,8 +1,14 @@
 import { useState } from 'react'
 
-export const VERSION = '1.0.2'
+export const VERSION = '1.0.3'
 
 const CHANGELOG = [
+  {
+    version: '1.0.3',
+    changes: [
+      'Fealty level 20 now cuts troop crop consumption by 4% — applied to your own troops (including the healing tent) in every crop balance.',
+    ],
+  },
   {
     version: '1.0.2',
     changes: [

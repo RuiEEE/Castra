@@ -125,6 +125,15 @@ Full editable knowledge base: `GAME_DATA.md`.
   export — the owner's one trough village (L15) is the only one where EL eat 1 and EI eat 2, and
   its Equites Caesaris are undiscounted.
   This matters — it takes EC from 45 to 60 att/crop, the difference between a luxury and a real unit.
+- **Fealty level 20 gives −4% troop crop consumption** (`calc.fealtyCropFactor`, owner-confirmed
+  2026-09-03). Unlike fealty's cost/time lines it does NOT scale — it is flat and only at the last
+  level. The game credits it as one line on the village crop-balance screen, worth 4% of that
+  village's **own** troop consumption: a village eating 19,923 crop/h showed a +796 credit
+  (= floor(0.04 × 19,923)). Applied to own army + wounded (and to detached troops, so
+  `stationDeltas` scales too), **not** to `hosted` — foreign troops get their own line in the game's
+  breakdown and belong to a player with his own fealty. World Wonder garrisons are left undiscounted.
+  OPEN: the owner reports prestige can raise this to 5%, but not which prestige level does it, so
+  that extra point is unmodelled.
 - **`village.troops` is the deployable army and nothing else.** Wounded units are held in
   `village.wounded`, which is NOT a subset of `troops` — they can't move and can't defend, so
   counting them would overstate what a village can do. They eat half upkeep

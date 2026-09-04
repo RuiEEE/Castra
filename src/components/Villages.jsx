@@ -664,8 +664,8 @@ export default function Villages({ villages, troops, settings, routes, bonuses, 
   // Troops stationed elsewhere move their crop bill with them whether or not a
   // merchant ever runs, so that belongs in the BEFORE-routes figure. Only
   // routeDeltas is what a trade route adds on top.
-  const stations = stationDeltas(villages, troops)
-  const deltas = netDeltas(villages, troops, routes)
+  const stations = stationDeltas(villages, troops, settings)
+  const deltas = netDeltas(villages, troops, routes, settings)
   const editing = villages.find((v) => v.id === editingId)
   if (editing) {
     return (
@@ -715,7 +715,7 @@ export default function Villages({ villages, troops, settings, routes, bonuses, 
     return acc
   }, {})
   const totalTroops = villages.reduce((s, v) => s + troopCount(v), 0)
-  const totalUpkeep = villages.reduce((s, v) => s + troopUpkeep(v, troops), 0)
+  const totalUpkeep = villages.reduce((s, v) => s + troopUpkeep(v, troops, settings), 0)
   const ww = wonderSupport(villages, troops)
 
   // Empire-wide queue snapshot: units training in the Barracks/Stable/Workshop

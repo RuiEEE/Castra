@@ -13,7 +13,7 @@ export default function Army({ villages, troops, settings, routes, mix, setMix }
 
   // Aggregate the scoped villages into one virtual economy.
   const pooled = useMemo(() => {
-    const deltas = netDeltas(villages, troops, routes)
+    const deltas = netDeltas(villages, troops, routes, settings)
     const prod = { wood: 0, clay: 0, iron: 0, crop: 0 }
     let barracks = 0, stable = 0, trough = 0
     for (const v of scoped) {

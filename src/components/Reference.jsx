@@ -1,5 +1,5 @@
 import { RES_IDS, TRIBES, SRC_LABEL } from '../gameData'
-import { fealtyBonus, prestigeBonus } from '../calc'
+import { fealtyBonus, prestigeBonus, fealtyCropFactor } from '../calc'
 
 function SrcChip({ src, label }) {
   if (src === 'user') return <span className="chip good" title={SRC_LABEL.user}>yours</span>
@@ -26,6 +26,8 @@ export default function Reference({
   const f = fealtyBonus(settings.fealty)
   const p = prestigeBonus(prestige)
   const costCut = (b) => (f.cost[b] || 0) + (p.cost[b] || 0)
+  // Fealty's crop line is flat and only at the last level, so it's separate.
+  const cropCut = Math.round((1 - fealtyCropFactor(settings)) * 100)
 
   return (
     <>
@@ -79,6 +81,7 @@ export default function Reference({
           </label>
           <span className="note" style={{ alignSelf: 'flex-end' }}>
             Troop cost −{costCut('barracks')}% barracks · −{costCut('stable')}% stable · −{costCut('workshop')}% workshop
+            {cropCut > 0 && ` · troop crop −${cropCut}%`}
           </span>
         </div>
       </div>

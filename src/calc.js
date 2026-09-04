@@ -232,11 +232,28 @@ export function countsUpkeep(counts, troops, village) {
 //   - plus another player's troops stationed here, which the HOST feeds in
 //     Kingdoms. Oasis animals are the exception and cost nothing, so they never
 //     make it into `hosted`.
-export function troopUpkeep(village, troops) {
-  const own = countsUpkeep(village.troops, troops, village)
-  const wounded = countsUpkeep(village.wounded, troops, village) * WOUNDED_UPKEEP_FACTOR
+export function troopUpkeep(village, troops, settings) {
+  const f = fealtyCropFactor(settings)
+  const own = countsUpkeep(village.troops, troops, village) * f
+  const wounded = countsUpkeep(village.wounded, troops, village) * WOUNDED_UPKEEP_FACTOR * f
   const hosted = countsUpkeep(village.hosted, troops, village)
   return own + wounded + hosted
+}
+
+// Fealty's crop bonus behaves unlike its cost/time lines: it does not scale, it
+// is a flat -4% on troop consumption unlocked at the last fealty level (20).
+// The game credits it as a single line on the village's crop balance screen
+// ("-4% troop consumption (fealty bonus)"), worth 4% of that village's OWN
+// troop consumption — confirmed on a real village: 19,923 crop/h of own troops
+// gave a 796 credit. Foreign troops get their own line right below it, so they
+// are left out here (their owner has his own fealty). OPEN: the owner reports
+// prestige can push this to 5%, but not which prestige level does it, so that
+// extra point is not modelled.
+export const FEALTY_CROP_LEVEL = 20
+export const FEALTY_CROP_PCT = 4
+
+export function fealtyCropFactor(settings) {
+  return (settings?.fealty || 0) >= FEALTY_CROP_LEVEL ? 1 - FEALTY_CROP_PCT / 100 : 1
 }
 
 // --- Kingdom & account training bonuses -------------------------------------
@@ -449,7 +466,7 @@ export function productionGap(village, premium) {
 
 // --- Village economics ------------------------------------------------------
 export function villageNet(village, troops, settings, delta) {
-  const upkeep = troopUpkeep(village, troops)
+  const upkeep = troopUpkeep(village, troops, settings)
   const pop = settings.popEatsCrop ? village.population || 0 : 0
   const gross = grossProduction(village, settings.premium)
   const net = {}
@@ -531,8 +548,11 @@ export function committedMerchants(routes) {
 // trough), the host starts (at its trough). Ownership and army count stay with
 // the home — only crop upkeep relocates. A WW is not your village, so nothing
 // lands on your books at all — the cost becomes a shipment (wonderSupport).
-export function stationDeltas(villages, troops) {
+export function stationDeltas(villages, troops, settings) {
   const byId = new Map((villages || []).map((v) => [v.id, v]))
+  // Detached troops are still your own, so the fealty crop credit follows them:
+  // the home stops paying the discounted bill and the host starts paying it.
+  const f = fealtyCropFactor(settings)
   const map = {}
   const bump = (id, crop) => {
     if (id == null || !crop) return
@@ -541,10 +561,10 @@ export function stationDeltas(villages, troops) {
   }
   for (const v of villages || []) {
     for (const d of v.detachments || []) {
-      bump(v.id, countsUpkeep(d.troops, troops, v))              // home no longer feeds them
+      bump(v.id, countsUpkeep(d.troops, troops, v) * f)              // home no longer feeds them
       if (d.ww) continue
       const host = byId.get(d.toId)
-      bump(d.toId, -countsUpkeep(d.troops, troops, host || v))   // host now feeds them
+      bump(d.toId, -countsUpkeep(d.troops, troops, host || v) * f)   // host now feeds them
     }
   }
   return map
@@ -616,8 +636,8 @@ function mergeDeltas(...maps) {
 
 // The full per-village hourly delta from everything that moves resources
 // between villages: standing trade routes + detached-troop crop upkeep.
-export function netDeltas(villages, troops, routes) {
-  return mergeDeltas(routeDeltas(routes), stationDeltas(villages, troops))
+export function netDeltas(villages, troops, routes, settings) {
+  return mergeDeltas(routeDeltas(routes), stationDeltas(villages, troops, settings))
 }
 
 // --- Crop balance -----------------------------------------------------------
@@ -631,8 +651,11 @@ export function netDeltas(villages, troops, routes) {
 // `delta` carries the crop that moved with a detachment plus any standing route.
 export function cropBreakdown(village, troops, settings, delta) {
   const gross = grossProduction(village, settings.premium).crop * settings.serverSpeed
-  const army = countsUpkeep(village.troops, troops, village)
-  const wounded = countsUpkeep(village.wounded, troops, village) * WOUNDED_UPKEEP_FACTOR
+  // Army and healing tent are shown net of the fealty crop credit — what those
+  // troops actually take off the village, not their listed upkeep.
+  const f = fealtyCropFactor(settings)
+  const army = countsUpkeep(village.troops, troops, village) * f
+  const wounded = countsUpkeep(village.wounded, troops, village) * WOUNDED_UPKEEP_FACTOR * f
   const hosted = countsUpkeep(village.hosted, troops, village)
   const pop = settings.popEatsCrop ? village.population || 0 : 0
   const moved = delta?.crop || 0
@@ -698,7 +721,7 @@ export function trainingDemand(village, troops, settings, bonuses = NO_BONUS) {
 // standing routes. This is what "does this route push the sender into the red"
 // has to be answered against, so the Routes tab and the Production tab agree.
 export function villageBalances(villages, troops, settings, routes, bonuses = NO_BONUS) {
-  const deltas = netDeltas(villages, troops, routes)
+  const deltas = netDeltas(villages, troops, routes, settings)
   const out = {}
   for (const v of villages || []) {
     const g = grossProduction(v, settings.premium)
@@ -722,7 +745,7 @@ export function villageBalances(villages, troops, settings, routes, bonuses = NO
 // Not a min-cost flow. At this village count the heuristic is close enough and
 // the plan stays legible, which matters more.
 export function cropPlan(villages, troops, settings, tribe, routes) {
-  const deltas = netDeltas(villages, troops, routes)
+  const deltas = netDeltas(villages, troops, routes, settings)
   const rows = villages.map((v) => ({ village: v, ...cropBreakdown(v, troops, settings, deltas[v.id]) }))
   const wonders = wonderTargets(villages, troops)
 
@@ -914,9 +937,10 @@ export function trainingPlan(villages, balance, routes, tribe, settings) {
 export function armyCeiling(village, troops, settings, mix) {
   const { net } = villageNet(village, troops, settings)
   const cropHeadroom = net.crop
+  const f = fealtyCropFactor(settings)
   const mixUpkeep = troops.reduce((sum, t) => {
     const w = mix[t.id] || 0
-    return sum + w * effectiveUpkeep(t, village)
+    return sum + w * effectiveUpkeep(t, village) * f
   }, 0)
   if (mixUpkeep <= 0) return { batches: Infinity, cropHeadroom }
   return { batches: Math.floor(cropHeadroom / mixUpkeep), cropHeadroom }
@@ -1085,7 +1109,7 @@ function movableTroops(village) {
 // own troops into the best crop-surplus host to cover it. Greedy: fewest units
 // (highest per-unit upkeep first), capped by the host's spare crop.
 export function parkingSuggestions(villages, troops, settings, tribe, savedRoutes) {
-  const deltas = netDeltas(villages, troops, savedRoutes)
+  const deltas = netDeltas(villages, troops, savedRoutes, settings)
   const profiles = villages.map((v) => ({ village: v, net: villageNet(v, troops, settings, deltas[v.id]).net }))
   const cropSpare = new Map(profiles.map((p) => [p.village.id, p.net.crop]))
 

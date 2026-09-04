@@ -11,7 +11,7 @@ export default function Trade({ villages, troops, settings, routes, addRoute, re
   const tribe = TRIBES[settings.tribe]
 
   const byId = useMemo(() => new Map(villages.map((v) => [v.id, v])), [villages])
-  const deltas = useMemo(() => netDeltas(villages, troops, routes), [villages, troops, routes])
+  const deltas = useMemo(() => netDeltas(villages, troops, routes, settings), [villages, troops, routes, settings])
 
   const { routes: suggestions } = useMemo(
     () => buildRoutes(villages, troops, settings, tribe, horizon, routes),
