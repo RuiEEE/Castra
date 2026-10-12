@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react'
-import { TRIBES, buildingName } from '../gameData'
+import { TRIBES, RES_IDS, GREAT_COST_FACTOR, buildingName } from '../gameData'
 import {
   WCI, grossProduction, troopCount, routeDeltas, routeRates, wonderTargets,
-  merchantCount, trainingPlan, villageProducers, trainingLevel,
-  TRAINABLE_BUILDINGS, byName, fmt, fmtHours,
+  merchantCount, trainingPlan, villageProducers, trainingLevel, barracksUpgrades,
+  TRAINABLE_BUILDINGS, BASE_BUILDING, byName, fmt, fmtHours,
 } from '../calc'
 import { everyText } from './RouteForm'
 
@@ -38,8 +38,11 @@ function trainLabel(secs) {
 
 // Building metadata for the producing table: the game's own type id (so the name
 // comes from BUILDING_CATALOG) and the troop class the owner thinks in.
-const BUILDING_GID = { barracks: 19, stable: 20, workshop: 21 }
-const BUILDING_CLASS = { barracks: 'Infantry', stable: 'Cavalry', workshop: 'Siege' }
+const BUILDING_GID = { barracks: 19, stable: 20, workshop: 21, greatBarracks: 29, greatStable: 30 }
+const BUILDING_CLASS = {
+  barracks: 'Infantry', stable: 'Cavalry', workshop: 'Siege',
+  greatBarracks: 'Great infantry', greatStable: 'Great cavalry',
+}
 
 export default function Production({ villages, troops, settings, routes, bonuses, setVillage }) {
   const tribe = TRIBES[settings.tribe] || TRIBES.romans
@@ -59,8 +62,8 @@ export default function Production({ villages, troops, settings, routes, bonuses
     return s
   }, [villages, settings])
 
-  // One entry per (village, training building) with a unit assigned — a village
-  // running its barracks, stable and workshop at once shows up three times.
+  // One entry per (village, training building) with a unit assigned — a city
+  // running barracks, stable, workshop and both great queues shows up five times.
   const producers = useMemo(
     () => villages.flatMap((v) => villageProducers(v, troops, settings, bonuses).map((p) => ({ v, ...p }))),
     [villages, troops, settings, bonuses],
@@ -150,9 +153,18 @@ export default function Production({ villages, troops, settings, routes, bonuses
         selfFunded = Math.floor(unitsDay * Math.min(1, sf))
         funded = Math.floor(unitsDay * Math.min(1, fd))
       }
-      return { v, defs: ps.map((p) => p.def), unitsDay, made, cost, moved, own, net, selfFunded, funded, short }
+      // One entry per queue, not per unit: the same unit can be in training in
+      // both a barracks and a great barracks, and they cost different amounts.
+      const defs = ps.map((p) => ({ building: p.building, def: p.def, great: p.great }))
+      return { v, defs, unitsDay, made, cost, moved, own, net, selfFunded, funded, short }
     })
   }, [ordered, producers, deltas, settings])
+
+  // Where the next barracks level buys the most infantry per resource spent.
+  const upgrades = useMemo(
+    () => barracksUpgrades(ordered, troops, settings, bonuses),
+    [ordered, troops, settings, bonuses],
+  )
 
   // The shipping problem, using the same route machinery the Crop tab uses: a
   // step-function merchant cost, any whole-hour departure interval, and a source
@@ -294,7 +306,8 @@ export default function Production({ villages, troops, settings, routes, bonuses
                           )
                         }
                         const p = producers.find((x) => x.v.id === v.id && x.building === building)
-                        const opts = trainable.filter((t) => t.building === building)
+                        // A great building trains its base building's units.
+                        const opts = trainable.filter((t) => t.building === BASE_BUILDING[building])
                         return (
                           <div className="build-tile" key={building}>
                             <div className="btop">
@@ -305,10 +318,11 @@ export default function Production({ villages, troops, settings, routes, bonuses
                               </select>
                               <button type="button" className="linkx" title={`Stop training ${BUILDING_CLASS[building].toLowerCase()} here`} onClick={() => disable(v, building)}>✕</button>
                             </div>
-                            {p && p.missing && <span className="chip bad">no {building}</span>}
+                            {p && p.missing && <span className="chip bad">no {buildingName(BUILDING_GID[building])}</span>}
                             {p && !p.missing && (
                               <span className="bstat">
                                 {trainLabel(p.secs)} · {fmt(p.perDay)}/day{resourceLimited ? ` · ${fmt(p.perDay * scale)} real` : ''}
+                                {p.great && ` · ×${GREAT_COST_FACTOR} cost`}
                               </span>
                             )}
                           </div>
@@ -459,6 +473,53 @@ export default function Production({ villages, troops, settings, routes, bonuses
             </table>
           </div>
           </div>
+
+          {upgrades.length > 0 && (
+            <div className="panel">
+              <div className="panel-head">
+                <h2>Cheapest barracks upgrade</h2>
+                <span className="spacer" />
+                <span className="note">Best infantry per resource spent first</span>
+              </div>
+              <table className="grid">
+                <thead>
+                  <tr>
+                    <th>Village</th>
+                    <th>Unit</th>
+                    <th className="num">Barracks</th>
+                    <th className="num">Units/day</th>
+                    <th className="num">Gain</th>
+                    {RES_IDS.map((r) => <th key={r} className={`num res-${r}`}>{r}</th>)}
+                    <th className="num">Total</th>
+                    <th className="num">Res / unit/day</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {upgrades.map((u, i) => (
+                    <tr key={u.village.id}>
+                      <td>
+                        {u.village.name}
+                        {i === 0 && <span className="chip gold" style={{ marginLeft: 6 }}>cheapest</span>}
+                      </td>
+                      <td>{u.def.name}</td>
+                      <td className="num">{u.level} → {u.to}</td>
+                      <td className="num">{fmt(u.perDay)} → {fmt(u.nextPerDay)}</td>
+                      <td className="num pos">+{fmt(u.gain, 1)}</td>
+                      {RES_IDS.map((r) => <td key={r} className={`num res-${r}`}>{fmt(u.cost[r])}</td>)}
+                      <td className="num">{fmt(u.total)}</td>
+                      <td className="num">{fmt(u.per)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {resourceLimited && (
+                <div className="alert" style={{ marginTop: 12 }}>
+                  You're capped by {bottleneck}, not by buildings — a barracks level raises what the
+                  queue could train but not what you can pay for. Fix {bottleneck} first.
+                </div>
+              )}
+            </div>
+          )}
 
           {empireShort.length > 0 && (
             <div className="alert bad">
@@ -611,7 +672,16 @@ export default function Production({ villages, troops, settings, routes, bonuses
                     <tr key={row.v.id}>
                       <td>
                         {row.v.name}
-                        {row.defs.map((d) => <span key={d.id} className="chip" style={{ marginLeft: 6 }}>{d.short}</span>)}
+                        {row.defs.map((d) => (
+                          <span
+                            key={d.building}
+                            className="chip"
+                            style={{ marginLeft: 6 }}
+                            title={buildingName(BUILDING_GID[d.building])}
+                          >
+                            {d.def.short}{d.great ? ' ×3' : ''}
+                          </span>
+                        ))}
                         {row.short.length > 0 && <span className="chip bad" style={{ marginLeft: 6 }}>needs {row.short.join('/')}</span>}
                       </td>
                       <td className="num">{row.unitsDay > 0 ? fmt(row.unitsDay) : <span className="zero">—</span>}</td>

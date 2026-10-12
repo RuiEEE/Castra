@@ -115,6 +115,13 @@ Full editable knowledge base: `GAME_DATA.md`.
    `calc.trainingBonuses` / Hero tab Equipment panel.)
 2. The exact Horse Drinking Trough level where Equites Legati / Imperatoris first get their −1.
    Known to be active by 15, but the levels below that are untested.
+3. **Great Barracks / Great Stable.** Confirmed by the owner 2026-10-11: cities only, each needs
+   its normal counterpart at level 20, every great level cuts training time 10% off the same base,
+   and units cost **3×** (`gameData.GREAT_COST_FACTOR`). Still unconfirmed: their building type ids
+   in the export (29/30 assumed from classic Travian — the owner has built neither yet, so no
+   payload has carried one), and whether the fealty/prestige cost discount applies before or after
+   the ×3 (the app triples first; at most 2 resources apart). Their BUILD cost table is unknown, so
+   `calc.barracksUpgrades` deliberately covers the normal barracks only.
 
 ## Modelling assumptions
 
@@ -168,8 +175,13 @@ Full editable knowledge base: `GAME_DATA.md`.
   `capacity / (2 * travel)` average — it ignores both ceilings.
   Which intervals the game actually offers is **unconfirmed**: 1 h and 2 h are known good, so the
   app accepts any whole hour and lets the owner type the real one rather than guess a menu.
-- **Standing routes are entered by hand, on their own Routes tab.** The game export does NOT carry
-  trade routes, so this is the one place manual entry is still correct. It has its own tab
+- **Standing routes live on their own Routes tab.** `?c=player&a=getAll` does NOT carry trade
+  routes — but the payload the client loads with a village's **Marketplace** does, and
+  `gameImport.parseTradeRoutes()` reads it (one village per paste). It gives the loads, the
+  destination tile and the exact one-way travel time. It does **not** give the departure interval,
+  and its `merchants` field is the convoy per DEPARTURE (`ceil(load / carry)`), not the total the
+  route ties up — so the interval is typed per route on import and the commitment stored is
+  `merchants × sets`. Hand entry stays for anything not pasted. It has its own tab
   (`components/Routes.jsx`, 2026-08-23) because **ONE route is ONE departure and one departure is
   ONE convoy** — a route loaded with wood *and* crop is neither a crop thing nor a wood thing, so it
   can't belong to the Crop or Production tab. Those tabs still answer *"what's still missing"*;

@@ -116,6 +116,8 @@ const MODELLED_BUILDINGS = [
   { type: 20, field: 'stable' },
   { type: 21, field: 'workshop' },
   { type: 28, field: 'tradeOffice' },
+  { type: 29, field: 'greatBarracks', max: 20 },
+  { type: 30, field: 'greatStable', max: 20 },
   { type: 41, field: 'troughLevel' },
 ]
 const MODELLED_BY_TYPE = new Map(MODELLED_BUILDINGS.map((b) => [b.type, b]))

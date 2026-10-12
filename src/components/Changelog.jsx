@@ -1,8 +1,28 @@
 import { useState } from 'react'
 
-export const VERSION = '1.0.3'
+export const VERSION = '1.0.6'
 
 const CHANGELOG = [
+  {
+    version: '1.0.6',
+    changes: [
+      'Great Barracks and Great Stable — a city\'s second infantry/cavalry queue is now a producer of its own on the Production tab, with its own level and training time.',
+      'Units trained in a great building cost 3× the normal resources, so the ledger, the shipping plan and the merchant budget all account for them.',
+    ],
+  },
+  {
+    version: '1.0.5',
+    changes: [
+      'Production tab: "Cheapest barracks upgrade" ranks every infantry-training village by how many resources the next barracks level costs per extra unit/day, with the wood/clay/iron/crop to ship.',
+    ],
+  },
+  {
+    version: '1.0.4',
+    changes: [
+      'Routes tab: import a village\'s standing routes straight from the game — paste the response the client loads with its Marketplace and every route comes in with its loads, destination and travel time.',
+      'The departure interval is the one thing that payload does not carry, so it is still typed per route on import.',
+    ],
+  },
   {
     version: '1.0.3',
     changes: [

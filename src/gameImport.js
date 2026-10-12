@@ -56,6 +56,11 @@ const BUILDING_TYPES = {
   20: { key: 'stable' },
   21: { key: 'workshop' },
   28: { key: 'tradeOffice' },
+  // Ids 29/30 follow the classic Travian order and are UNCONFIRMED for
+  // Kingdoms — no export has carried a great building yet. If a city's second
+  // queue imports at the wrong level, check these first.
+  29: { key: 'greatBarracks' },
+  30: { key: 'greatStable' },
   41: { key: 'troughLevel' },
 }
 
@@ -406,4 +411,92 @@ export function parseGameExport(text, tribe = 'romans') {
   }
 
   return { villages, stackCount: stacks.length, wonderUnits, error: null }
+}
+
+// ---------------------------------------------------------------------------
+// TRADE ROUTES
+//
+// A second, much smaller payload: the response the client gets when you open a
+// village's Marketplace. `?c=player&a=getAll` does NOT carry routes, so this is
+// the one that does — one marketplace, one village, at a time.
+//
+//   Merchants:<vid>              max / inTransport / carry / speed
+//   Collection:TradeRoute:<vid>  one entry per standing route
+//
+// A TradeRoute entry gives everything except how often it departs:
+//   villageId / destVillageId    both are map tiles, so a destination that isn't
+//                                one of your villages still has coordinates
+//   resources {1..4}             the LOAD PER TRIP, in the field-type order
+//   merchants                    carts per DEPARTURE, i.e. ceil(load / carry) —
+//                                NOT the total the route ties up. Confirmed on
+//                                three routes at once: 14000/2100 → 7,
+//                                700/2100 → 1, 6000/2100 → 3.
+//   duration                     one-way travel in SECONDS, and the only exact
+//                                figure for it we have ever had
+//   status                       1 on every route confirmed running. A route
+//                                paused in game has to land on some other
+//                                value, so anything that isn't 1 is passed
+//                                through and the importer leaves it out rather
+//                                than book it as a live shipment. Which value
+//                                a paused route actually carries is UNCONFIRMED.
+//
+// `times` (16777215 = 2^24-1) / `recurrences` / `minutesOffset` are kept raw:
+// one of them must hold the departure schedule, but three routes that provably
+// run on different intervals all show the same values, so nothing is assumed.
+// ---------------------------------------------------------------------------
+export function parseTradeRoutes(text) {
+  let root
+  try {
+    root = JSON.parse(text)
+  } catch {
+    return { routes: [], error: 'Not valid JSON — copy the whole response body, braces included.' }
+  }
+
+  const entries = collectEntries(root)
+  if (!entries.length) {
+    return { routes: [], error: 'No cache entries found. This should be the response the game loads when you open a village Marketplace.' }
+  }
+
+  // The marketplace itself: how many merchants the village has and what one
+  // carries. `carry` is the real per-merchant capacity, trade office included.
+  const markets = {}
+  for (const e of entries) {
+    const m = /^Merchants:(\d+)/.exec(e.name)
+    if (!m) continue
+    markets[m[1]] = {
+      max: num(e.data.max),
+      inTransport: num(e.data.inTransport),
+      carry: num(e.data.carry),
+      speed: num(e.data.speed),
+    }
+  }
+
+  const routes = []
+  for (const e of entries) {
+    if (!/^TradeRoute:\d+/.test(e.name)) continue
+    const d = e.data
+    const loads = { wood: 0, clay: 0, iron: 0, crop: 0 }
+    for (const [type, res] of Object.entries(FIELD_TYPES)) loads[res] = num(d.resources?.[type])
+    const from = String(d.villageId || '')
+    routes.push({
+      gameId: String(d.id || ''),
+      fromGameId: from,
+      toGameId: String(d.destVillageId || ''),
+      toName: String(d.destVillageName || '').trim(),
+      toCoords: tileCoords(d.destVillageId),
+      loads,
+      total: Object.values(loads).reduce((a, b) => a + b, 0),
+      // Carts per departure, straight from the game.
+      merchants: num(d.merchants),
+      // Seconds → hours, the unit the rest of the app works in.
+      travel: num(d.duration) / 3600,
+      status: num(d.status),
+      market: markets[from] || null,
+    })
+  }
+
+  if (!routes.length) {
+    return { routes: [], markets, error: 'No trade routes in this response. Open the Marketplace of a village that has some and copy that request.' }
+  }
+  return { routes, markets, error: null }
 }

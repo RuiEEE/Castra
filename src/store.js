@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { DEFAULT_SETTINGS, TRIBES, emptyVillage, RES_IDS, heroProduction } from './gameData'
-import { trainingBonuses } from './calc'
+import { trainingBonuses, TRAINABLE_BUILDINGS } from './calc'
 
 const KEY = 'castra.state.v1'
 
@@ -85,7 +85,7 @@ function splitWounded(v) {
 // at once, so it's a { barracks, stable, workshop } map. Move a legacy id onto
 // its own building's slot. Idempotent — an already-migrated map passes through.
 function migrateProduces(produces) {
-  const empty = { barracks: null, stable: null, workshop: null }
+  const empty = Object.fromEntries(TRAINABLE_BUILDINGS.map((b) => [b, null]))
   if (produces && typeof produces === 'object') return { ...empty, ...produces }
   if (!produces) return empty
   for (const tribe of Object.values(TRIBES)) {
@@ -98,11 +98,14 @@ function migrateProduces(produces) {
 function migrateVillage(v) {
   const produces = migrateProduces(v.produces)
   const workshop = v.workshop || 0
+  // A city's second infantry/cavalry queue, added after these saves were written.
+  const greatBarracks = v.greatBarracks || 0
+  const greatStable = v.greatStable || 0
   // Premium is now account-wide (settings), not per-village. Stored resources
   // are no longer tracked at all — they change too fast to be worth saving.
   if (Array.isArray(v.oases)) {
     const { premium, stored, allBuildings, ...rest } = v
-    return { ...rest, workshop, produces, oases: v.oases.map(normalizeOasis) }
+    return { ...rest, workshop, greatBarracks, greatStable, produces, oases: v.oases.map(normalizeOasis) }
   }
   const oases = []
   if (v.oasis) {
@@ -114,7 +117,10 @@ function migrateVillage(v) {
     }
   }
   const { oasis, premium, stored, allBuildings, ...rest } = v
-  return { ...rest, workshop, produces, oases, embassy: Math.max(v.embassy || 0, embassyForCount(oases.length)) }
+  return {
+    ...rest, workshop, greatBarracks, greatStable, produces, oases,
+    embassy: Math.max(v.embassy || 0, embassyForCount(oases.length)),
+  }
 }
 
 const migrateVillages = (list, fromVersion = 1) =>

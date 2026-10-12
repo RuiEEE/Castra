@@ -1,5 +1,5 @@
 import {
-  RES_IDS, WW_UPKEEP_FACTOR, WOUNDED_UPKEEP_FACTOR, HEAL_COST_FACTOR,
+  RES_IDS, WW_UPKEEP_FACTOR, WOUNDED_UPKEEP_FACTOR, HEAL_COST_FACTOR, GREAT_COST_FACTOR,
   storageCapacity, totalCapacity, heroItemValue,
 } from './gameData'
 import {
@@ -665,19 +665,31 @@ export function cropBreakdown(village, troops, settings, delta) {
   }
 }
 
-// The three buildings that train troops at the same time. A village can run any
-// combination of them, so `village.produces` holds one unit per building.
-export const TRAINABLE_BUILDINGS = ['barracks', 'stable', 'workshop']
+// Every building that trains troops, all of them running at the same time. A
+// village can run any combination, so `village.produces` holds one unit per
+// building. The Great Barracks / Great Stable are a city's second infantry /
+// cavalry queue: same unit list, their own level and training-time curve, and
+// units cost GREAT_COST_FACTOR x the normal resources.
+export const TRAINABLE_BUILDINGS = ['barracks', 'stable', 'workshop', 'greatBarracks', 'greatStable']
+
+// Which normal building a training building behaves like: it decides the unit
+// list it offers and which fealty/prestige/hero bonus line applies to it.
+export const BASE_BUILDING = {
+  barracks: 'barracks',
+  stable: 'stable',
+  workshop: 'workshop',
+  greatBarracks: 'barracks',
+  greatStable: 'stable',
+}
+
+export const GREAT_BUILDINGS = ['greatBarracks', 'greatStable']
 
 export const trainingLevel = (village, building) =>
-  building === 'barracks' ? village.barracks || 0
-    : building === 'stable' ? village.stable || 0
-      : building === 'workshop' ? village.workshop || 0
-        : 0
+  (TRAINABLE_BUILDINGS.includes(building) ? village[building] : 0) || 0
 
 // One entry per training building the village has a unit assigned to, with its
 // throughput and hourly resource demand. This is the unit of work the Production
-// tab and trainingDemand both build on — a village can appear up to three times.
+// tab and trainingDemand both build on — a village can appear once per building.
 export function villageProducers(village, troops, settings, bonuses = NO_BONUS) {
   const produces = village.produces || {}
   const out = []
@@ -686,14 +698,18 @@ export function villageProducers(village, troops, settings, bonuses = NO_BONUS) 
     if (!id) continue
     const def = (troops || []).find((t) => t.id === id)
     if (!def) continue
-    const secs = trainTimeSeconds(def, village, settings, bonuses)
+    const secs = trainTimeSeconds(def, village, settings, bonuses, building)
     const perHour = secs ? 3600 / secs : 0
     // The unit's real per-item cost after the kingdom's training-cost discount,
-    // floored the way the game charges it (75 -> floor(75*0.905) = 67).
-    const cf = bonuses.costFactor?.[building] ?? 1
-    const unit = (i) => Math.floor((def.cost[i] || 0) * cf)
+    // floored the way the game charges it (75 -> floor(75*0.905) = 67). A great
+    // building triples the base first; whether the game rounds the discount
+    // before or after the x3 is unconfirmed, and differs by at most 2 resources.
+    const great = GREAT_BUILDINGS.includes(building)
+    const cf = bonuses.costFactor?.[BASE_BUILDING[building]] ?? 1
+    const mult = great ? GREAT_COST_FACTOR : 1
+    const unit = (i) => Math.floor((def.cost[i] || 0) * mult * cf)
     out.push({
-      def, building, secs, perHour, perDay: perHour * 24,
+      def, building, secs, perHour, perDay: perHour * 24, great,
       level: trainingLevel(village, building),
       demand: {
         wood: perHour * unit(0),
@@ -714,6 +730,40 @@ export function trainingDemand(village, troops, settings, bonuses = NO_BONUS) {
     for (const r of WCI) d[r] += p.demand[r]
   }
   return d
+}
+
+// Ranking the next barracks level across the villages already training infantry.
+//
+// A level cuts train time by `trainSpeedBase`, so the throughput gain is a fixed
+// PERCENTAGE (~+11%) but its absolute size is whatever that barracks already
+// pumps out — while the cost climbs steeply with the level it is at. So the
+// cheapest place to spend is a real search, not "upgrade the smallest" or
+// "upgrade the biggest": a level-19 barracks gains the most units and costs
+// ~20x a level-10 one. Ranked on total resources per extra unit/day.
+//
+// Only villages with a unit assigned to the barracks qualify — a level buys
+// nothing where nothing is being trained.
+export function barracksUpgrades(villages, troops, settings, bonuses = NO_BONUS) {
+  const out = []
+  for (const v of villages) {
+    const p = villageProducers(v, troops, settings, bonuses)
+      .find((x) => x.building === 'barracks')
+    if (!p || p.missing) continue
+    const up = nextUpgrade(19, p.level)
+    if (!up) continue // already at max level
+    const secs = trainTimeSeconds(p.def, { ...v, barracks: p.level + 1 }, settings, bonuses)
+    const perDay = secs ? (3600 / secs) * 24 : 0
+    const gain = perDay - p.perDay
+    if (gain <= 0) continue
+    out.push({
+      village: v, def: p.def, level: p.level, to: up.toLevel,
+      perDay: p.perDay, nextPerDay: perDay, gain,
+      cost: Object.fromEntries(RES_IDS.map((r, i) => [r, up.cost[i]])),
+      total: up.total,
+      per: up.total / gain,
+    })
+  }
+  return out.sort((a, b) => a.per - b.per)
 }
 
 // The one true per-village position for all four resources, after everything
@@ -969,14 +1019,18 @@ export function sustainableRate(village, troops, settings, mix) {
 }
 
 // Training-time constraint. time = base * speedBase^(level-1), scaled by server.
-export function trainTimeSeconds(troopDef, village, settings, bonuses = NO_BONUS) {
-  const lvl = troopDef.building === 'barracks' ? village.barracks
-    : troopDef.building === 'stable' ? village.stable
-    : troopDef.building === 'workshop' ? village.workshop
-    : 1
+//
+// `building` is which queue is training it — normally the unit's own building,
+// but a Great Barracks / Great Stable runs the same units off its OWN level, so
+// a fresh level-1 great building trains at full base time even next to a
+// level-20 normal one.
+export function trainTimeSeconds(troopDef, village, settings, bonuses = NO_BONUS, building = troopDef.building) {
+  // The Residence/Palace level isn't modelled, so settlers and senators are
+  // timed at their base, as they always have been.
+  const lvl = TRAINABLE_BUILDINGS.includes(building) ? trainingLevel(village, building) : 1
   if (!lvl || lvl < 1) return null
   const factor = Math.pow(settings.trainSpeedBase, lvl - 1)
-  const b = troopDef.building
+  const b = BASE_BUILDING[building] || troopDef.building
   // Empire-wide fealty/prestige training-time cut, plus the hero's helmet — the
   // helmet only helps the barracks/stable in the village the hero is standing in.
   const empire = bonuses.timeFactor?.[b] ?? 1

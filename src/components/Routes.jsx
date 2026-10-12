@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react'
 import { TRIBES } from '../gameData'
 import {
-  routeRates, routeTotal, routeCost, RESOURCES, wonderTargets, villageBalances,
-  travelHours, merchantCapacity, merchantCount, committedMerchants, byName, fmt, fmtHours,
+  routeRates, routeTotal, routeCost, routeSchedule, RESOURCES, MAX_ROUTE_INTERVAL,
+  wonderTargets, villageBalances, travelHours, merchantCapacity, merchantCount,
+  committedMerchants, byName, fmt, fmtHours,
 } from '../calc'
+import { parseTradeRoutes } from '../gameImport'
 import RouteForm, { everyText } from './RouteForm'
 
 // Every standing trade route in the empire, all four resources in one place.
@@ -26,9 +28,170 @@ function destOptions(villages, wonders) {
   ]
 }
 
+// Import one village's standing routes from the payload the game loads with its
+// Marketplace. Everything comes out of the JSON except the departure interval —
+// the payload's `merchants` is the convoy per DEPARTURE, so it says nothing
+// about how many convoys are in the air at once — so that stays typed, and the
+// total commitment is worked out from it.
+function RouteImport({ villages, wonders, tribe, settings, routes, addRoute, updateRoute }) {
+  const [text, setText] = useState('')
+  const [intervals, setIntervals] = useState({})
+  const [done, setDone] = useState(null)
+
+  const parsed = useMemo(() => (text.trim() ? parseTradeRoutes(text) : null), [text])
+
+  const rows = useMemo(() => (parsed?.routes || []).map((r, i) => {
+    const source = villages.find((v) => v.gameId === r.fromGameId)
+    const dest = villages.find((v) => v.gameId === r.toGameId)
+    const wonder = wonders.find((w) => String(w.wwId) === r.toGameId)
+    const interval = Math.min(MAX_ROUTE_INTERVAL, Math.max(1, Math.round(Number(intervals[i]) || 1)))
+    // Travel comes from the payload — an exact figure, where the model only has
+    // distance ÷ merchant speed. `merchants` is one convoy, so the marketplace
+    // has to cover one per set that's in the air at the same time.
+    const sets = routeSchedule(r.travel, interval).sets
+    const existing = routes.find((x) => (r.gameId && x.gameRouteId === r.gameId)
+      || (source && x.fromId === source.id
+        && (dest ? x.toId === dest.id : wonder && x.wwId === wonder.wwId)))
+    return {
+      ...r, key: i, source, dest, wonder, interval, sets, existing,
+      merchantsTotal: r.merchants * sets,
+      // What the model would have said the leg takes, as a check on merchant speed.
+      modelTravel: source && (dest || wonder) ? travelHours(source, dest || wonder, tribe, settings) : null,
+      // Only a running route is a real shipment. Every route confirmed running
+      // reports status 1, so anything else is left out — a paused route booked
+      // as live would spend merchants and crop the village never sends.
+      skip: !source || (!dest && !wonder) || r.status !== 1,
+    }
+  }), [parsed, villages, wonders, routes, intervals, tribe, settings])
+
+  const usable = rows.filter((r) => !r.skip)
+  // The payload times every leg exactly, so a systematic gap against the model
+  // means the merchant speed in Settings is wrong for this server.
+  const speedCheck = useMemo(() => {
+    const ok = usable.filter((r) => r.modelTravel > 0 && r.travel > 0)
+    if (!ok.length) return null
+    const ratio = ok.reduce((s, r) => s + r.modelTravel / r.travel, 0) / ok.length
+    return Math.abs(ratio - 1) > 0.02 ? ratio : null
+  }, [usable])
+
+  const apply = () => {
+    for (const r of usable) {
+      const route = {
+        gameRouteId: r.gameId,
+        fromId: r.source.id,
+        toId: r.dest?.id ?? null,
+        wwId: r.wonder?.wwId ?? null,
+        rates: Object.fromEntries(RESOURCES.filter((res) => r.loads[res] > 0)
+          .map((res) => [res, r.loads[res] / r.interval])),
+        interval: r.interval,
+        merchants: r.merchantsTotal,
+      }
+      if (r.existing) updateRoute(r.existing.id, route)
+      else addRoute(route)
+    }
+    setDone({ added: usable.filter((r) => !r.existing).length, updated: usable.filter((r) => r.existing).length })
+    setText('')
+    setIntervals({})
+  }
+
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <h2>Import from the game</h2>
+        <span className="spacer" />
+        <span className="note">One marketplace at a time — the routes belong to that village</span>
+      </div>
+      <div className="hint" style={{ marginBottom: 8 }}>
+        With the browser's network inspector recording, open a village's Marketplace in game and
+        copy the response that contains <code>Collection:TradeRoute</code>. It carries the loads,
+        the destination and the exact travel time. It does <strong>not</strong> carry the departure
+        interval, so set that per route below.
+      </div>
+      <textarea
+        value={text}
+        onChange={(e) => { setText(e.target.value); setDone(null) }}
+        rows={5}
+        spellCheck={false}
+        placeholder='Paste the response body here — {"cache": [ … ]}'
+        style={{ fontFamily: 'var(--mono)', fontSize: 13, resize: 'vertical' }}
+      />
+      {parsed?.error && <div className="alert bad" style={{ marginTop: 10 }}>{parsed.error}</div>}
+      {rows.length > 0 && (
+        <table className="grid" style={{ marginTop: 10 }}>
+          <thead>
+            <tr>
+              <th>From</th><th>To</th>
+              {RESOURCES.map((r) => <th key={r} className="num">{r}/trip</th>)}
+              <th className="num">Every (h)</th><th className="num">Merchants</th><th className="num">One way</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.key}>
+                <td>
+                  {r.source?.name || <span className="chip bad">village not imported yet</span>}
+                </td>
+                <td>
+                  {r.dest?.name || r.wonder?.name || r.toName}
+                  {r.wonder && <span className="chip gold" style={{ marginLeft: 6 }}>wonder</span>}
+                  {!r.dest && !r.wonder && <span className="chip bad" style={{ marginLeft: 6 }}>not one of yours</span>}
+                  {r.status !== 1 && (
+                    <span className="chip bad" style={{ marginLeft: 6 }}
+                      title={`The game reports status ${r.status} for this route, not the 1 a running route shows — skipped, so it doesn't spend merchants you're not actually using`}>
+                      {r.existing ? 'not running — remove the one already listed' : 'not running — skipped'}
+                    </span>
+                  )}
+                  {r.existing && r.status === 1 && <span className="chip" style={{ marginLeft: 6 }}>already listed — will update</span>}
+                </td>
+                {RESOURCES.map((res) => (
+                  <td key={res} className={`num ${r.loads[res] ? `res-${res}` : ''}`}>
+                    {r.loads[res] ? fmt(r.loads[res]) : '—'}
+                  </td>
+                ))}
+                <td className="num">
+                  <input type="number" min="1" max={MAX_ROUTE_INTERVAL} step="1"
+                    value={intervals[r.key] ?? '1'}
+                    onChange={(e) => setIntervals({ ...intervals, [r.key]: e.target.value })}
+                    style={{ width: 64 }} />
+                </td>
+                <td className="num">
+                  {fmt(r.merchantsTotal)}
+                  <span className="rsub"> {fmt(r.merchants)}/trip{r.sets > 1 ? ` × ${r.sets} sets` : ''}</span>
+                </td>
+                <td className="num">{fmtHours(r.travel)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {speedCheck && (
+        <div className="alert" style={{ marginTop: 10 }}>
+          The game times these legs {ratioText(speedCheck)} than the model does. Merchant speed in
+          Reference is {fmt(tribe.merchantSpeed * settings.serverSpeed)} fields/h; these routes imply{' '}
+          <strong>{fmt(Math.round(tribe.merchantSpeed * settings.serverSpeed * speedCheck))} fields/h</strong>.
+        </div>
+      )}
+      <div className="row" style={{ marginTop: 8 }}>
+        <button className="btn primary fit" type="button" onClick={apply} disabled={usable.length === 0}>
+          Import {usable.length > 0 ? `${usable.length} route${usable.length === 1 ? '' : 's'}` : 'routes'}
+        </button>
+        <button className="btn ghost fit" type="button" onClick={() => { setText(''); setIntervals({}); setDone(null) }}>Clear</button>
+      </div>
+      {done && (
+        <div className="alert good" style={{ marginTop: 10 }}>
+          {done.added} added{done.updated > 0 ? `, ${done.updated} updated` : ''}.
+        </div>
+      )}
+    </div>
+  )
+}
+
+const ratioText = (ratio) => `${fmt(Math.round(Math.abs(ratio - 1) * 100))}% ${ratio > 1 ? 'faster' : 'slower'}`
+
 export default function Routes({ villages, troops, settings, routes, bonuses, addRoute, updateRoute, removeRoute }) {
   const tribe = TRIBES[settings.tribe] || TRIBES.romans
   const [editingId, setEditingId] = useState(null)
+  const [showImport, setShowImport] = useState(false)
 
   const ordered = useMemo(() => [...villages].sort(byName), [villages])
   const wonders = useMemo(() => wonderTargets(villages, troops), [villages, troops])
@@ -64,7 +227,7 @@ export default function Routes({ villages, troops, settings, routes, bonuses, ad
         <div className="stat">
           <div className="k">Standing routes</div>
           <div className="v">{fmt(list.length)}</div>
-          <div className="s">entered by hand · the export doesn't carry them</div>
+          <div className="s">imported per marketplace, or typed by hand</div>
         </div>
         <div className="stat">
           <div className="k">Merchants committed</div>
@@ -72,6 +235,21 @@ export default function Routes({ villages, troops, settings, routes, bonuses, ad
           <div className="s">of {fmt(totalMerchants)} · {fmt(Math.max(0, totalMerchants - usedMerchants))} still free</div>
         </div>
       </div>
+
+      <div className="panel-head">
+        <h2>Routes</h2>
+        <span className="spacer" />
+        <button className="btn" onClick={() => setShowImport((s) => !s)}>
+          {showImport ? 'Close import' : 'Import routes'}
+        </button>
+      </div>
+
+      {showImport && (
+        <RouteImport
+          villages={ordered} wonders={wonders} tribe={tribe} settings={settings}
+          routes={list} addRoute={addRoute} updateRoute={updateRoute}
+        />
+      )}
 
       <div className="panel">
         <div className="panel-head">

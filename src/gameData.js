@@ -304,6 +304,11 @@ export const BUILDING_CATALOG = {
   25: { name: 'Residence', short: 'Res' },
   26: { name: 'Palace', short: 'Pal' },
   28: { name: 'Trade Office', short: 'Trade', ok: true },
+  // A city's second infantry/cavalry queue, unlocked by a level-20 Barracks /
+  // Stable. Ids follow the classic Travian order and are UNCONFIRMED for
+  // Kingdoms — the owner has neither built yet, so no export has carried one.
+  29: { name: 'Great Barracks', short: 'GBrks' },
+  30: { name: 'Great Stable', short: 'GStbl' },
   31: { name: 'City Wall', short: 'Wall' },
   41: { name: 'Horse Drinking Trough', short: 'Trough', ok: true },
   42: { name: 'Building 42', short: '42' },
@@ -333,6 +338,12 @@ export const WOUNDED_UPKEEP_FACTOR = 0.5
 // Healing a wounded unit costs half what training it costs (owner, in-game).
 // That is the whole appeal of the tent: the unit comes back for half price.
 export const HEAL_COST_FACTOR = 0.5
+
+// A unit trained in the Great Barracks / Great Stable costs 3x the normal
+// resources (owner, in-game). That is the whole trade: a city buys a second
+// queue with gold-plated units. Training TIME is unaffected — each great level
+// cuts it 10% off the same base, exactly like the normal building.
+export const GREAT_COST_FACTOR = 3
 
 export const TRIBES = {
   romans: {
@@ -546,6 +557,10 @@ export function emptyVillage(n = 1) {
     barracks: 0,
     stable: 0,
     workshop: 0,
+    // Second infantry/cavalry queue. Cities only, each needing its normal
+    // counterpart at level 20; units cost GREAT_COST_FACTOR x the usual.
+    greatBarracks: 0,
+    greatStable: 0,
     troughLevel: 0,
     // Every slot the game reported, as { loc, type, lvl } — locations 1-18 are
     // the resource fields, 19+ the village centre, type 0 an empty slot. Purely
@@ -571,6 +586,6 @@ export function emptyVillage(n = 1) {
     // Empire Production planner: which unit each training building is set to
     // train. A village runs its barracks, stable and workshop at the same time,
     // so this is one troop id per building (or null when a building is idle).
-    produces: { barracks: null, stable: null, workshop: null },
+    produces: { barracks: null, stable: null, workshop: null, greatBarracks: null, greatStable: null },
   }
 }
