@@ -5,7 +5,7 @@ import {
 import {
   CP_BUILDINGS, EXPANSION_CP, SMALL_CELEBRATION, LARGE_CELEBRATION,
   SMALL_PARTY_SECONDS, LARGE_PARTY_SECONDS, LARGE_PARTY_MIN_TOWN_HALL,
-  STOLEN_TREASURE,
+  STOLEN_TREASURE, PREREQS, EXCLUSIVE_GROUPS, FIELD_GIDS,
 } from './cultureData'
 
 // --- Storage capacity -------------------------------------------------------
@@ -1501,6 +1501,247 @@ export function upgradeResPerCP(total, deltaCP, horizonDays) {
 export function upgradeBreakEven(total, deltaCP, celebrationResPerCP) {
   if (deltaCP <= 0 || !Number.isFinite(celebrationResPerCP) || celebrationResPerCP <= 0) return Infinity
   return total / (deltaCP * celebrationResPerCP)
+}
+
+// --- The cheapest next buy in one village -----------------------------------
+// A small celebration grants min(THIS village's CP/day, 500), so what a village
+// really delivers is `passive + min(passive, 500) × parties/day`. Both halves
+// are buildable: CP buildings raise `passive`, Town Hall levels raise
+// parties/day. One objective covers both — RESOURCES PER CP/DAY DELIVERED — and
+// it is the objective because it is self-limiting: once passive crosses 500 the
+// grant stops growing, so the 501st point of production is worth a third of the
+// 499th and the solver moves to Town Hall on its own. That is the whole
+// mid-game sequencing rule (reach the cap, THEN buy throughput) falling out of
+// the maths instead of being hardcoded.
+//
+// Why this has to be a search:
+//   - CP/day per level is CONVEX (a cultureBase-6 building makes 7 CP at level 1
+//     and 230 at 20) while cost compounds ~26%/level, so the FIRST level of a
+//     high-base building is the cheapest CP in the game (Academy 1 = 5 CP for
+//     510) and the last is the most expensive. "Upgrade the biggest" is wrong.
+//   - The game ROUNDS CP per level, so some levels grant ZERO: cultureBase 1 at
+//     levels 2/4/5/8, base 2 at 3, base 3 at 2. A per-level greedy refuses to
+//     step through a free level, so candidates are RUNS of levels and every
+//     building offers its own cheapest run.
+//   - Town Hall is priced against whatever `passive` currently is, so it has to
+//     be re-quoted after every other buy.
+
+export const CENTRE_SLOT_RANGE = [19, 40]
+
+export function partiesPerDay(thLevel) {
+  const th = Math.floor(thLevel || 0)
+  if (th < 1) return 0 // no Town Hall, no celebrations
+  const seconds = SMALL_PARTY_SECONDS[Math.min(th, SMALL_PARTY_SECONDS.length) - 1]
+  return seconds > 0 ? 86400 / seconds : 0
+}
+
+// What a village actually delivers per day: its passive production plus the
+// celebration grants it can finish, each capped at 500.
+export function cpYield(passive, thLevel) {
+  return passive + Math.min(passive, SMALL_CELEBRATION.cap) * partiesPerDay(thLevel)
+}
+
+// Free building slots in the village centre — a brand-new building needs one.
+// Locations 19-40 are the centre (some villages carry 41-43, so this reads low
+// rather than high); anything listed is occupied.
+export function freeCentreSlots(village) {
+  const [from, to] = CENTRE_SLOT_RANGE
+  const taken = new Set()
+  for (const s of village.slots || []) {
+    if (s.loc >= from && s.loc <= to) taken.add(s.loc)
+  }
+  return Math.max(0, to - from + 1 - taken.size)
+}
+
+// Can this building be placed at all? Only asked of buildings the village does
+// not have — raising an existing one is never gated. `PREREQS` is partial, so
+// `unknown` means "we have no entry", which the UI surfaces as a caveat.
+export function prereqStatus(gid, levels, village) {
+  if ((levels[gid] || 0) > 0) return { ok: true, missing: [] }
+  const missing = []
+  for (const group of EXCLUSIVE_GROUPS) {
+    if (!group.includes(gid)) continue
+    const taken = group.find((g) => g !== gid && (levels[g] || 0) > 0)
+    if (taken) missing.push(`no ${CP_BUILDINGS[taken].name}`)
+  }
+  const p = PREREQS[gid]
+  if (!p) return { ok: missing.length === 0, unknown: true, missing }
+  if (p.city && village.kind !== 'city') missing.push('a city')
+  for (const [needGid, needLevel] of p.needs || []) {
+    if ((levels[needGid] || 0) < needLevel) missing.push(`${CP_BUILDINGS[needGid].name} ${needLevel}`)
+  }
+  return { ok: missing.length === 0, missing }
+}
+
+// Storage gates building: a level whose cost exceeds the village's warehouse or
+// granary capacity cannot even be queued. Checked level by level across a run,
+// since the run is built one level at a time at today's capacity.
+function runFitsStorage(b, from, to, caps) {
+  for (let i = from; i < to; i++) {
+    const [w, c, ir, cr] = b.cost[i]
+    if (Math.max(w, c, ir) > caps.warehouse) return false
+    if (cr > caps.granary) return false
+  }
+  return true
+}
+
+// Capacity as the plan leaves it — a planned Warehouse/Granary level raises the
+// ceiling for everything bought after it, which is exactly why a deep Town Hall
+// drags a second warehouse along with it.
+function plannedCaps(village, premium, levels) {
+  const bumped = (arr, planned) => {
+    if (!Array.isArray(arr) || !arr.length) return null
+    const copy = [...arr]
+    let hi = 0
+    for (let i = 1; i < copy.length; i++) if (copy[i] > copy[hi]) hi = i
+    copy[hi] = Math.max(copy[hi], planned || 0)
+    return copy
+  }
+  const w = bumped(village.warehouses, levels[10])
+  const g = bumped(village.granaries, levels[11])
+  return {
+    warehouse: w ? totalCapacity(w, premium) : warehouseCapacity(village, premium),
+    granary: g ? totalCapacity(g, premium) : granaryCapacity(village, premium),
+  }
+}
+
+// Greedy over cheapest res per CP/day delivered. Returns the buys in the order
+// they pay best, with running totals, plus what is locked and why.
+export function cpVillagePlan(village, settings = {}, options = {}) {
+  const premium = settings.premium
+  const target = options.target ?? SMALL_CELEBRATION.cap
+  const budget = options.budget ?? Infinity
+  const maxSteps = options.maxSteps ?? 60
+  const gids = Object.keys(CP_BUILDINGS).map(Number).filter((g) => !FIELD_GIDS.includes(g))
+
+  const levels = {}
+  for (const gid of gids) levels[gid] = buildingLevel(village, gid)
+  // Every slot counted individually — 18 fields, several warehouses — so this is
+  // comparable with the game's own figure. The gap is the village's city bonus
+  // and anything else the table doesn't know about.
+  let modelled = 0
+  for (const s of village.slots || []) {
+    const b = CP_BUILDINGS[s.type]
+    if (b && s.lvl > 0) modelled += b.cp[Math.min(s.lvl, b.cp.length) - 1]
+  }
+  // The export's own CP figure WINS — it already folds in city status, quests
+  // and anything the building table doesn't model. The difference is carried as
+  // a constant so modelled deltas land on the real number.
+  const reported = village.culturePointProduction || 0
+  const passive0 = reported > 0 ? reported : modelled
+  let passive = passive0
+
+  const steps = []
+  const cost = [0, 0, 0, 0]
+  let free = freeCentreSlots(village)
+  let crossedAt = passive0 >= target ? -1 : null // -1 = already there before any buy
+
+  for (let n = 0; n < maxSteps; n++) {
+    const caps = plannedCaps(village, premium, levels)
+    const thNow = levels[24] || 0
+    const yieldNow = cpYield(passive, thNow)
+    let best = null
+    for (const gid of gids) {
+      const b = CP_BUILDINGS[gid]
+      const from = levels[gid]
+      if (from >= b.cp.length) continue
+      const pre = prereqStatus(gid, levels, village)
+      if (!pre.ok) continue
+      if (from === 0 && free <= 0) continue
+      for (let to = from + 1; to <= b.cp.length; to++) {
+        // Storage blocks this level and every deeper one, which only cost more.
+        if (!runFitsStorage(b, from, to, caps)) break
+        const up = cumulativeUpgrade(gid, from, to)
+        if (!up || up.deltaCP <= 0) continue
+        const gain = cpYield(passive + up.deltaCP, gid === 24 ? to : thNow) - yieldNow
+        if (gain <= 0) continue
+        const rate = up.total / gain
+        if (!best || rate < best.rate) {
+          best = { ...up, rate, gain, newBuilding: from === 0, unknownPrereq: !!pre.unknown }
+        }
+      }
+    }
+    if (!best) break
+    if (sum4(cost) + best.total > budget) break
+
+    levels[best.gid] = best.toLevel
+    if (best.newBuilding) free -= 1
+    passive += best.deltaCP
+    for (let r = 0; r < 4; r++) cost[r] += best.cost[r]
+    const th = levels[24] || 0
+    steps.push({
+      ...best,
+      passive,
+      th,
+      parties: partiesPerDay(th),
+      delivered: cpYield(passive, th),
+      spent: sum4(cost),
+      spentCost: [...cost],
+    })
+    if (crossedAt === null && passive >= target) crossedAt = steps.length - 1
+  }
+
+  // Cheap buildings the village can't have yet — worth knowing, because the
+  // unlock is often one Academy level away.
+  const locked = []
+  for (const gid of gids) {
+    if (levels[gid] > 0) continue
+    const pre = prereqStatus(gid, levels, village)
+    if (pre.ok) continue
+    const up = cumulativeUpgrade(gid, 0, 1)
+    if (!up || up.deltaCP <= 0) continue
+    locked.push({ ...up, missing: pre.missing, rate: up.total / up.deltaCP })
+  }
+  locked.sort((a, b) => a.rate - b.rate)
+
+  // Levels the plan stops short of because the warehouse or granary cannot hold
+  // the cost. This is why a deep Town Hall drags storage along with it: Town
+  // Hall 20 alone costs 137,200 iron, which one level-20 warehouse (80,000, or
+  // 100,000 with premium) cannot hold at all.
+  const caps = plannedCaps(village, premium, levels)
+  const storageBlocked = []
+  for (const gid of gids) {
+    const b = CP_BUILDINGS[gid]
+    const from = levels[gid]
+    if (from < 1 || from >= b.cp.length) continue
+    if (runFitsStorage(b, from, from + 1, caps)) continue
+    const [w, c, ir, cr] = b.cost[from]
+    storageBlocked.push({
+      gid, name: b.name, level: from + 1,
+      needWarehouse: Math.max(w, c, ir), needGranary: cr,
+      warehouse: caps.warehouse, granary: caps.granary,
+    })
+  }
+
+  const th = levels[24] || 0
+  const parties = partiesPerDay(th)
+  const th0 = buildingLevel(village, 24)
+  return {
+    village,
+    target,
+    baseline: {
+      passive: passive0,
+      modelled,
+      th: th0,
+      parties: partiesPerDay(th0),
+      delivered: cpYield(passive0, th0),
+    },
+    steps,
+    crossedAt,
+    locked,
+    storageBlocked,
+    freeSlots: free,
+    passive,
+    th,
+    parties,
+    delivered: cpYield(passive, th),
+    cost,
+    total: sum4(cost),
+    // What spamming the party actually costs to RUN once it is set up — a
+    // recurring bill, never added to the one-off build cost above.
+    partyResPerDay: sum4(SMALL_CELEBRATION.cost) * parties,
+    reachesTarget: passive >= target,
+  }
 }
 
 export function fmt(n, digits = 0) {

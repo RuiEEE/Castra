@@ -1,8 +1,16 @@
 import { useState } from 'react'
 
-export const VERSION = '1.0.6'
+export const VERSION = '1.0.7'
 
 const CHANGELOG = [
+  {
+    version: '1.0.7',
+    changes: [
+      'Culture tab: "Cheapest path to 500 CP/day" works out the exact build order for a village — every next level of every culture building ranked by resources per CP/day delivered, then bought greedily until the small celebration grant is capped.',
+      'The Town Hall is priced on both of its payoffs: its own culture points and the extra parties per day it unlocks, which is why it only becomes worth climbing once the village is already at the cap.',
+      'The plan respects what the game does: build prerequisites, buildings that exclude each other, free centre slots, and the warehouse level — a level the warehouse cannot hold is flagged instead of planned.',
+    ],
+  },
   {
     version: '1.0.6',
     changes: [

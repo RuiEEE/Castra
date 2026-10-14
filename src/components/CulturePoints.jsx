@@ -2,9 +2,9 @@ import { useMemo, useState } from 'react'
 import {
   empireCulture, expansionOutlook, smallCelebrationPlan, largeCelebrationPlan,
   nextUpgrade, upgradeResPerCP, upgradeBreakEven, townHallLevel,
-  celebrationBudget, fmt,
+  celebrationBudget, cpVillagePlan, byName, fmt,
 } from '../calc'
-import { CP_BUILDINGS } from '../cultureData'
+import { CP_BUILDINGS, SMALL_CELEBRATION } from '../cultureData'
 
 // The one question this tab answers: to earn culture points — which unlock the
 // expansion slots that let you settle new villages — is it cheaper to run a
@@ -125,6 +125,65 @@ export default function CulturePoints({ villages, troops, settings }) {
   ]
   const bestKind = options.reduce((a, b) => (b.rate < a.rate ? b : a)).kind
 
+  // --- Cheapest path to a CP target, for one village ------------------------
+  // Mid-game the binding question isn't "celebrate or build", it's "what do I
+  // build NEXT in this village so its small celebrations stop granting 280".
+  // Default to the village with the most CP/day that is still short of the cap
+  // — the one where the next resource spent buys the most.
+  const [planVillageId, setPlanVillageId] = useState(null)
+  const [planTarget, setPlanTarget] = useState(SMALL_CELEBRATION.cap)
+  const [planBudget, setPlanBudget] = useState('')
+  const planVillage = useMemo(() => {
+    const picked = villages.find((v) => v.id === planVillageId)
+    if (picked) return picked
+    let best = null
+    for (const v of villages) {
+      const cp = v.culturePointProduction || 0
+      if (cp >= SMALL_CELEBRATION.cap) continue
+      if (!best || cp > (best.culturePointProduction || 0)) best = v
+    }
+    return best || [...villages].sort(byName)[0] || null
+  }, [villages, planVillageId])
+  const plan = useMemo(() => {
+    if (!planVillage) return null
+    const budget = planBudget.trim() !== '' && Number(planBudget) > 0 ? Number(planBudget) : Infinity
+    return cpVillagePlan(planVillage, settings, { target: planTarget, budget })
+  }, [planVillage, settings, planTarget, planBudget])
+  // The build cost in the only currency that matters at four villages: days of
+  // this village's own wood/clay/iron, which is what it would otherwise ship to
+  // the capital for troops.
+  // The headline numbers describe the plan UP TO the target — that's the
+  // question. The table then runs a few buys further to show what takes over
+  // once the cap is reached (always the Town Hall, for throughput).
+  const head = useMemo(() => {
+    if (!plan) return null
+    const reached = plan.crossedAt !== null && plan.crossedAt >= 0
+    const upto = reached ? plan.steps.slice(0, plan.crossedAt + 1) : plan.steps
+    const last = upto[upto.length - 1]
+    return {
+      count: upto.length,
+      passive: last ? last.passive : plan.baseline.passive,
+      delivered: last ? last.delivered : plan.baseline.delivered,
+      th: last ? last.th : plan.baseline.th,
+      parties: last ? last.parties : plan.baseline.parties,
+      total: last ? last.spent : 0,
+      wci: last ? last.spentCost[0] + last.spentCost[1] + last.spentCost[2] : 0,
+      reaches: plan.crossedAt !== null,
+    }
+  }, [plan])
+  const planDays = useMemo(() => {
+    if (!plan || !planVillage || !head) return 0
+    const row = budget.rows.find((r) => r.village.id === planVillage.id)
+    const daily = row ? row.wci.wood + row.wci.clay + row.wci.iron : 0
+    return daily > 0 ? head.wci / daily : 0
+  }, [plan, planVillage, budget, head])
+  const visibleSteps = useMemo(() => {
+    if (!plan) return []
+    if (planBudget.trim() !== '') return plan.steps
+    const cut = plan.crossedAt !== null && plan.crossedAt >= 0 ? plan.crossedAt + 7 : 30
+    return plan.steps.slice(0, cut)
+  }, [plan, planBudget])
+
   const imported = villages.some((v) => v.culturePoints || v.culturePointProduction || (v.slots || []).length)
   if (!imported) {
     return (
@@ -209,6 +268,135 @@ export default function CulturePoints({ villages, troops, settings }) {
               : ''}
           />
         </div>
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
+          <h2>Cheapest path to {fmt(planTarget)} CP/day</h2>
+          <span className="spacer" />
+          <label className="note" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            Village
+            <select value={planVillage?.id ?? ''} onChange={(e) => setPlanVillageId(Number(e.target.value))}>
+              {[...villages].sort(byName).map((v) => (
+                <option key={v.id} value={v.id}>{v.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="note" style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 16 }}>
+            Target
+            <input
+              type="number" min={1} value={planTarget}
+              onChange={(e) => setPlanTarget(Math.max(1, Number(e.target.value) || 1))}
+              style={{ width: 72 }}
+            />
+            CP/day
+          </label>
+          <label className="note" style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 16 }}>
+            Budget
+            <input
+              type="number" min={0} value={planBudget} placeholder="any"
+              onChange={(e) => setPlanBudget(e.target.value)}
+              style={{ width: 96 }}
+            />
+            res
+          </label>
+        </div>
+        {!plan ? (
+          <div className="hint">Pick a village with imported building levels.</div>
+        ) : (
+          <>
+            <div className="stats">
+              <div className="stat">
+                <div className="k">Passive CP/day</div>
+                <div className="v">
+                  {fmt(plan.baseline.passive)} → <b className={head.reaches ? 'pos' : ''}>{fmt(head.passive)}</b>
+                </div>
+                <div className="s">
+                  {head.reaches
+                    ? `small celebrations grant the full ${fmt(Math.min(planTarget, SMALL_CELEBRATION.cap))}`
+                    : `${fmt(planTarget - head.passive)} short of the target`}
+                </div>
+              </div>
+              <div className="stat">
+                <div className="k">Delivered CP/day</div>
+                <div className="v pos">
+                  {fmt(plan.baseline.delivered)} → {fmt(head.delivered)}
+                </div>
+                <div className="s">passive + grants at {fmt(head.parties, 2)} parties/day (Town Hall {head.th || '—'})</div>
+              </div>
+              <div className="stat">
+                <div className="k">Build cost</div>
+                <div className="v">{fmt(head.total)}</div>
+                <div className="s">
+                  {head.count} buy{head.count === 1 ? '' : 's'}
+                  {planDays > 0 && <> · {fmt(planDays, 1)} days of this village's w/c/i</>}
+                </div>
+              </div>
+              <div className="stat">
+                <div className="k">Party upkeep</div>
+                <div className="v">{fmt(plan.partyResPerDay)}</div>
+                <div className="s">res/day to keep spamming · {fmt(plan.freeSlots)} free slots left</div>
+              </div>
+            </div>
+            {plan.steps.length === 0 ? (
+              <div className="hint">
+                Nothing left to buy here — every culture building is maxed, locked or blocked by storage.
+              </div>
+            ) : (
+              <table className="grid">
+                <thead>
+                  <tr>
+                    <th>Build</th>
+                    <th className="num">Level</th>
+                    <th className="num">Cost</th>
+                    <th className="num">+CP/day</th>
+                    <th className="num">res per CP/day</th>
+                    <th className="num">Passive</th>
+                    <th className="num">Delivered</th>
+                    <th className="num">Spent</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleSteps.map((s, i) => (
+                    <tr key={`${s.gid}:${s.fromLevel}`} className={i === plan.crossedAt ? 'subtotal' : ''}>
+                      <td>
+                        {s.name}
+                        {s.newBuilding && <> <span className="chip warn">new{s.unknownPrereq ? ' · check' : ''}</span></>}
+                        {i === plan.crossedAt && <> <span className="chip good">target</span></>}
+                      </td>
+                      <td className="num">{s.fromLevel}→{s.toLevel}</td>
+                      <td className="num">{fmt(s.total)}</td>
+                      <td className="num pos">+{fmt(s.deltaCP)}</td>
+                      <td className="num">{fmt(s.rate)}</td>
+                      <td className="num">{fmt(s.passive)}</td>
+                      <td className="num">{fmt(s.delivered)}</td>
+                      <td className="num">{fmt(s.spent)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {visibleSteps.length < plan.steps.length && (
+              <div className="hint">
+                {plan.steps.length - visibleSteps.length} further buy
+                {plan.steps.length - visibleSteps.length === 1 ? '' : 's'} not shown — past the target the
+                only thing left worth buying is Town Hall throughput. Set a budget to see them all.
+              </div>
+            )}
+            {plan.locked.length > 0 && (
+              <div className="hint">
+                Locked: {plan.locked.slice(0, 6).map((l) => `${l.name} (needs ${l.missing.join(' + ')})`).join(' · ')}
+              </div>
+            )}
+            {plan.storageBlocked.length > 0 && (
+              <div className="hint">
+                Storage caps the plan: {plan.storageBlocked.map((s) => (
+                  `${s.name} ${s.level} costs ${fmt(Math.max(s.needWarehouse, 0))} of one resource, warehouse holds ${fmt(s.warehouse)}`
+                )).join(' · ')}
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       <div className="panel">

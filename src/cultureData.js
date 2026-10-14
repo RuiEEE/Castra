@@ -145,6 +145,38 @@ export const CP_BUILDINGS = {
     cost: [[900, 800, 750, 650], [1150, 1025, 960, 830], [1475, 1310, 1230, 1065], [1885, 1680, 1575, 1365], [2415, 2145, 2015, 1745], [3090, 2750, 2575, 2235], [3960, 3520, 3300, 2860], [5065, 4505, 4220, 3660], [6485, 5765, 5405, 4685], [8300, 7380, 6920, 5995], [10625, 9445, 8855, 7675], [13600, 12090, 11335, 9825], [17410, 15475, 14505, 12575], [22285, 19805, 18570, 16095], [28520, 25355, 23770, 20600], [36510, 32450, 30425, 26365], [46730, 41540, 38940, 33750], [59815, 53170, 49845, 43200], [76565, 68055, 63805, 55295], [98000, 87110, 81670, 70780]] },
 }
 
+// Build prerequisites, `gid -> { needs: [[gid, level]...], city: true }`.
+//
+// PARTIAL AND DELIBERATELY SO (owner-confirmed, 2026-10-14). Only requirements
+// the owner has seen in game are listed; a building missing from this table has
+// UNKNOWN requirements, and the planner flags a brand-new building rather than
+// claiming the game will let you place it. Upgrading a building that already
+// exists never has a prerequisite, so only level-0 entries are ever checked.
+export const PREREQS = {
+  21: { needs: [[22, 10]] },             // Workshop ← Academy 10
+  41: { needs: [[20, 20]] },             // Horse Drinking Trough ← Stable 20
+  42: { city: true },                    // Water Ditch ← the village must be a city
+  46: { needs: [[22, 15]] },             // Healing Tent ← Academy 15
+  29: { needs: [[19, 20]], city: true }, // Great Barracks ← Barracks 20 + city
+  30: { needs: [[20, 20]], city: true }, // Great Stable ← Stable 20 + city
+}
+
+// Buildings that rule each other out, so a village that has one can never place
+// another from the same group: the single wall slot (one per tribe), the
+// Residence/Palace choice, and the two treasuries (assumed exclusive — the
+// owner has only ever had one, so this errs on the side of not proposing it).
+export const EXCLUSIVE_GROUPS = [
+  [31, 32, 33, 43], // City Wall / Earth Wall / Palisade / Natarian Wall
+  [25, 26],         // Residence / Palace
+  [27, 45],         // Treasury / Hidden Treasury
+]
+
+// The resource fields are left out of culture planning entirely. A village has
+// 18 of them against this table's one, their level is driven by production
+// (never by CP), and their ceiling depends on village kind — so their CP is a
+// byproduct you have already paid for, not a lever.
+export const FIELD_GIDS = [1, 2, 3, 4]
+
 // Town Hall celebration durations in SECONDS, indexed [level-1]. A village can
 // only run one celebration at a time, so duration is the cooldown that caps how
 // many you fit in a day. Large parties unlock at Town Hall level 10.
