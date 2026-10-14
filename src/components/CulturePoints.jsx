@@ -134,7 +134,9 @@ export default function CulturePoints({ villages, troops, settings }) {
   const [planTarget, setPlanTarget] = useState(SMALL_CELEBRATION.cap)
   const [planBudget, setPlanBudget] = useState('')
   const planVillage = useMemo(() => {
-    const picked = villages.find((v) => v.id === planVillageId)
+    // Village ids are uuid STRINGS, but old saves carry numbers — a `<select>`
+    // only ever hands back a string, so compare as one.
+    const picked = villages.find((v) => String(v.id) === String(planVillageId))
     if (picked) return picked
     let best = null
     for (const v of villages) {
@@ -276,7 +278,7 @@ export default function CulturePoints({ villages, troops, settings }) {
           <span className="spacer" />
           <label className="note" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             Village
-            <select value={planVillage?.id ?? ''} onChange={(e) => setPlanVillageId(Number(e.target.value))}>
+            <select value={planVillage?.id ?? ''} onChange={(e) => setPlanVillageId(e.target.value)}>
               {[...villages].sort(byName).map((v) => (
                 <option key={v.id} value={v.id}>{v.name}</option>
               ))}
