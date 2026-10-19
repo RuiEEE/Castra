@@ -1,8 +1,18 @@
 import { useState } from 'react'
 
-export const VERSION = '1.0.7'
+export const VERSION = '1.0.8'
 
 const CHANGELOG = [
+  {
+    version: '1.0.8',
+    changes: [
+      'Production tab: "Support villages at target" answers how many finished support villages a finished capital needs — set the five training queues to the levels and units you are building towards, describe one support village, and it works out the demand, the import and the count.',
+      'The binding resource is named and the leftovers shown, because one village ships everything it makes: Equites Caesaris in both stables is iron-bound and strands a quarter of a million wood a day, where the great stable on Equites Imperatoris lands almost level on five fewer villages.',
+      'It also costs the convoy — the merchants one support village needs to export its own output at a given distance and Trade Office level, and a warning when that exceeds the 20 a marketplace can hold.',
+      'Trade Office levels buy range in jumps, not smoothly, because a convoy rounds up to whole merchants: the panel names the lowest level that ships the same load, so you do not pay for one that moves nothing.',
+      'The build prerequisites for the Stable (Smithy 3) and the Trade Office (Marketplace 20 and Stable 10) are now known, so the culture plan stops treating them as buildings with no chain behind them.',
+    ],
+  },
   {
     version: '1.0.7',
     changes: [

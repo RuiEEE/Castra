@@ -159,6 +159,11 @@ export const PREREQS = {
   46: { needs: [[22, 15]] },             // Healing Tent ← Academy 15
   29: { needs: [[19, 20]], city: true }, // Great Barracks ← Barracks 20 + city
   30: { needs: [[20, 20]], city: true }, // Great Stable ← Stable 20 + city
+  // Owner-confirmed in-game 2026-10-18. The Trade Office is the expensive one:
+  // it is gated behind a level-20 Marketplace and a Stable, which is itself
+  // gated behind a Smithy — 207,920 resources of chain before its own level 1.
+  20: { needs: [[13, 3]] },              // Stable ← Smithy 3
+  28: { needs: [[17, 20], [20, 10]] },   // Trade Office ← Marketplace 20 + Stable 10
 }
 
 // Buildings that rule each other out, so a village that has one can never place

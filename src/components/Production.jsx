@@ -1,8 +1,12 @@
 import { useMemo, useState } from 'react'
-import { TRIBES, RES_IDS, GREAT_COST_FACTOR, buildingName } from '../gameData'
+import {
+  TRIBES, RES_IDS, GREAT_COST_FACTOR, MARKETPLACE_LEVEL_MAX, VILLAGE_LAYOUTS,
+  FIELD_LEVEL_MAX, buildingName, detectLayout,
+} from '../gameData'
 import {
   WCI, grossProduction, troopCount, routeDeltas, routeRates, wonderTargets,
   merchantCount, trainingPlan, villageProducers, trainingLevel, barracksUpgrades,
+  targetTrainingDemand, targetVillageOutput, supportVillagesNeeded, supportShipping,
   TRAINABLE_BUILDINGS, BASE_BUILDING, byName, fmt, fmtHours,
 } from '../calc'
 import { everyText } from './RouteForm'
@@ -42,6 +46,347 @@ const BUILDING_GID = { barracks: 19, stable: 20, workshop: 21, greatBarracks: 29
 const BUILDING_CLASS = {
   barracks: 'Infantry', stable: 'Cavalry', workshop: 'Siege',
   greatBarracks: 'Great infantry', greatStable: 'Great cavalry',
+}
+
+// The hardest-hitting unit a queue can train — the one the owner would actually
+// pick for a finished capital. Attack is the right yardstick: it is what every
+// queue in the plan is for, and it picks Imperian / Equites Caesaris / Fire
+// Catapult for Romans without naming a single Roman unit, so the default still
+// makes sense on a Gaul or Teuton server.
+function strongestFor(troops, building) {
+  let best = null
+  for (const t of troops) {
+    if (t.building !== building) continue
+    if (!best || (t.att || 0) > (best.att || 0)) best = t
+  }
+  return best?.id || ''
+}
+
+// --- Target-state support planner -------------------------------------------
+// Everything above measures the empire as it stands. This asks the question that
+// comes first: once the capital is built out — all five queues at level 20,
+// training round the clock — how many FINISHED support villages does it take to
+// feed it, and which resource decides the number?
+//
+// The answer turns on the unit in each queue, because one village ships
+// everything it makes: the binding resource sets the village count and strands
+// the other two. Equites Caesaris in both stables is iron-bound and leaves a
+// quarter of a million wood a day with nowhere to go; swapping the great stable
+// to Equites Imperatoris lands almost level and costs five fewer villages.
+function SupportPlanner({ villages, troops, settings, bonuses, tribe }) {
+  const ordered = useMemo(() => [...villages].sort(byName), [villages])
+  const trainable = useMemo(
+    () => troops.filter((t) => TRAINABLE_BUILDINGS.includes(t.building)),
+    [troops],
+  )
+
+  const [capId, setCapId] = useState(
+    () => (villages.find((v) => v.capital) || [...villages].sort(byName)[0])?.id || '',
+  )
+  const capital = villages.find((v) => v.id === capId) || null
+
+  const [levels, setLevels] = useState(
+    () => Object.fromEntries(TRAINABLE_BUILDINGS.map((b) => [b, 20])),
+  )
+  const [produces, setProduces] = useState(() => Object.fromEntries(
+    TRAINABLE_BUILDINGS.map((b) => [b, strongestFor(troops, BASE_BUILDING[b])]),
+  ))
+
+  // The capital's own fields at build-out: its real layout, every field at the
+  // level a capital can reach — whichever village is picked here is the one
+  // being built as the capital, so it gets the capital's uncapped fields. A
+  // 15-cropper grows almost no wood, which is half the reason the support count
+  // is what it is.
+  const [capLayout, setCapLayout] = useState(
+    () => (capital?.fields ? detectLayout(capital.fields) : '15c'),
+  )
+  const [capFieldLevel, setCapFieldLevel] = useState(FIELD_LEVEL_MAX.capital)
+
+  // The support village template. One village, repeated — that's the whole
+  // premise, so it is typed once.
+  const [supLayout, setSupLayout] = useState('standard')
+  const [supKind, setSupKind] = useState('village')
+  const [supFieldLevel, setSupFieldLevel] = useState(10)
+  const [supBonus, setSupBonus] = useState(5)
+  const [supOases, setSupOases] = useState(0)
+  const [supOasisRes, setSupOasisRes] = useState('crop')
+
+  // What it costs to empty one of them into the capital. The Trade Office starts
+  // at 5, not 20: level 20 is 2,139,940 resources on top of a 207,920-resource
+  // prerequisite chain (Smithy 3 → Stable 10 → Marketplace 20), which is a month
+  // of a support village's entire output. Level 5 already doubles the merchant.
+  const [dist, setDist] = useState(20)
+  const [tradeOffice, setTradeOffice] = useState(5)
+
+  const capOut = useMemo(() => targetVillageOutput({
+    layout: capLayout,
+    fields: capLayout === 'custom' && capital ? RES_IDS.map((r) => (capital.fields?.[r] || []).length) : null,
+    fieldLevel: capFieldLevel, bonusLevel: 5,
+    kind: capital?.kind || 'city', capital: true,
+    premium: settings.premium, serverSpeed: settings.serverSpeed,
+  }), [capLayout, capFieldLevel, capital, settings])
+
+  const supOut = useMemo(() => targetVillageOutput({
+    layout: supLayout, fieldLevel: supFieldLevel, bonusLevel: supBonus,
+    oases: supOases, oasisRes: supOasisRes,
+    kind: supKind, capital: false,
+    premium: settings.premium, serverSpeed: settings.serverSpeed,
+  }), [supLayout, supKind, supFieldLevel, supBonus, supOases, supOasisRes, settings])
+
+  const demand = useMemo(
+    () => targetTrainingDemand(capital || {}, troops, settings, bonuses, { levels, produces }),
+    [capital, troops, settings, bonuses, levels, produces],
+  )
+
+  const match = useMemo(
+    () => supportVillagesNeeded(demand.perDay, capOut.perDay, supOut.perDay),
+    [demand, capOut, supOut],
+  )
+
+  const ship = useMemo(
+    () => supportShipping(supOut.perDay, tradeOffice, dist, tribe, settings),
+    [supOut, tradeOffice, dist, tribe, settings],
+  )
+
+  const countText = Number.isFinite(match.count) ? fmt(match.count) : '—'
+  const setLevel = (b, n) => setLevels((l) => ({ ...l, [b]: n }))
+  const setUnit = (b, id) => setProduces((p) => ({ ...p, [b]: id }))
+
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <h2>Support villages at target</h2>
+        <span className="spacer" />
+        <span className="note">What a finished capital needs, and which resource decides it</span>
+      </div>
+
+      <div className="row compact">
+        <label className="field" style={{ maxWidth: 220 }}>
+          <span>Capital</span>
+          <select value={capId} onChange={(e) => setCapId(e.target.value)}>
+            {ordered.map((v) => (
+              <option key={v.id} value={v.id}>{v.name}{v.capital ? ' (capital)' : ''}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field fit">
+          <span>Its layout</span>
+          <select value={capLayout} onChange={(e) => setCapLayout(e.target.value)}>
+            {VILLAGE_LAYOUTS.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+          </select>
+        </label>
+        <label className="field fit" style={{ minWidth: 110 }}>
+          <span>Field level</span>
+          <input
+            type="number" min={0} max={capOut.fieldLevelMax} value={capFieldLevel}
+            onChange={(e) => setCapFieldLevel(Number(e.target.value) || 0)}
+          />
+        </label>
+      </div>
+
+      {/* The five queues, side by side like the producing table above: each one
+          its level at build-out and the unit it will be running. */}
+      <div className="build-row" style={{ marginTop: 12 }}>
+        {TRAINABLE_BUILDINGS.map((b) => {
+          const opts = trainable.filter((t) => t.building === BASE_BUILDING[b])
+          const p = demand.producers.find((x) => x.building === b)
+          return (
+            <div className="build-tile" key={b}>
+              <div className="btop">
+                <span className="btitle">{buildingName(BUILDING_GID[b])}</span>
+                <input
+                  type="number" min={0} max={20} value={levels[b]} className="bselect"
+                  style={{ width: 54 }}
+                  onChange={(e) => setLevel(b, Number(e.target.value) || 0)}
+                />
+                <select value={produces[b] || ''} onChange={(e) => setUnit(b, e.target.value)} className="bselect">
+                  <option value="">—</option>
+                  {opts.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+              {p && !p.missing ? (
+                <span className="bstat">
+                  {trainLabel(p.secs)} · {fmt(p.perDay)}/day
+                  {p.great && ` · ×${GREAT_COST_FACTOR} cost`}
+                </span>
+              ) : (
+                <span className="bstat"><span className="zero">idle</span></span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="row compact" style={{ marginTop: 14 }}>
+        <label className="field fit">
+          <span>Support layout</span>
+          <select value={supLayout} onChange={(e) => setSupLayout(e.target.value)}>
+            {VILLAGE_LAYOUTS.filter((l) => l.fields).map((l) => (
+              <option key={l.id} value={l.id}>{l.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field fit">
+          <span>Kind</span>
+          <select value={supKind} onChange={(e) => setSupKind(e.target.value)}>
+            <option value="village">Village (fields 10)</option>
+            <option value="city">City (fields 12)</option>
+          </select>
+        </label>
+        <label className="field fit" style={{ minWidth: 110 }}>
+          <span>Field level</span>
+          <input
+            type="number" min={0} max={supOut.fieldLevelMax} value={supFieldLevel}
+            onChange={(e) => setSupFieldLevel(Number(e.target.value) || 0)}
+          />
+        </label>
+        <label className="field fit" style={{ minWidth: 110 }}>
+          <span>Bonus buildings</span>
+          <input
+            type="number" min={0} max={5} value={supBonus}
+            onChange={(e) => setSupBonus(Number(e.target.value) || 0)}
+          />
+        </label>
+        <label className="field fit" style={{ minWidth: 90 }}>
+          <span>Oases</span>
+          <input
+            type="number" min={0} max={3} value={supOases}
+            onChange={(e) => setSupOases(Number(e.target.value) || 0)}
+          />
+        </label>
+        <label className="field fit">
+          <span>Oasis gives</span>
+          <select value={supOasisRes} onChange={(e) => setSupOasisRes(e.target.value)}>
+            {RES_IDS.map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </label>
+        <label className="field fit" style={{ minWidth: 100 }}>
+          <span>Distance</span>
+          <input type="number" min={0} value={dist} onChange={(e) => setDist(Number(e.target.value) || 0)} />
+        </label>
+        <label className="field fit" style={{ minWidth: 110 }}>
+          <span>Trade Office</span>
+          <input
+            type="number" min={0} max={20} value={tradeOffice}
+            onChange={(e) => setTradeOffice(Number(e.target.value) || 0)}
+          />
+        </label>
+      </div>
+
+      <div className="stats" style={{ marginTop: 14 }}>
+        <div className="stat">
+          <div className="k">Capital burns</div>
+          <div className="v">{fmt(demand.total)}</div>
+          <div className="s">res/day · {fmt(demand.unitsPerDay)} units/day</div>
+        </div>
+        <div className="stat">
+          <div className="k">It imports</div>
+          <div className="v">{fmt(match.imported)}</div>
+          <div className="s">res/day · grows {fmt(capOut.total)} itself</div>
+        </div>
+        <div className="stat winner">
+          <div className="k">Support villages</div>
+          <div className="v">{countText}</div>
+          <div className="s">
+            {match.binding
+              ? <>{match.binding} binds at {fmt(match.per[match.binding].villages, 1)}</>
+              : 'the capital feeds itself'}
+          </div>
+        </div>
+        <div className="stat">
+          <div className="k">Stranded</div>
+          <div className={`v ${match.leftover > 0 ? 'neg' : 'pos'}`}>
+            {Number.isFinite(match.leftover) ? fmt(match.leftover) : '—'}
+          </div>
+          <div className="s">
+            res/day arriving with nothing to buy
+          </div>
+        </div>
+        <div className="stat">
+          <div className="k">
+            Merchants each {ship.wasted && <span className="chip warn">Trade Office {ship.sameAt} does it</span>}
+          </div>
+          <div className={`v ${ship.overCap ? 'neg' : ''}`}>{ship.rate > 0 ? fmt(ship.merchants) : '—'}</div>
+          <div className="s">
+            {ship.rate > 0 ? (
+              <>
+                {fmt(ship.rate)}/h over {fmtHours(ship.travel)} · {everyText(ship.interval)}
+                {ship.sets > 1 && ` · ${ship.sets} sets`}
+              </>
+            ) : 'nothing to ship'}
+          </div>
+        </div>
+        <div className="stat">
+          <div className="k">Crop to spare</div>
+          <div className="v pos">{fmt(supOut.perDay.crop)}</div>
+          <div className="s">per village per day, for celebrations</div>
+        </div>
+      </div>
+
+      {ship.overCap && (
+        <div className="alert bad" style={{ marginTop: 12 }}>
+          One support village needs {fmt(ship.merchants)} merchants to export its own output,
+          and a marketplace tops out at {MARKETPLACE_LEVEL_MAX}. At {fmt(dist)} fields with Trade
+          Office {tradeOffice} it cannot ship what it grows — raise the Trade Office, or settle closer.
+        </div>
+      )}
+
+      <table className="grid" style={{ marginTop: 14 }}>
+        <thead>
+          <tr>
+            <th>Resource</th>
+            <th className="num">Demand/day</th>
+            <th className="num">Capital grows</th>
+            <th className="num">To import</th>
+            <th className="num">Each village</th>
+            <th className="num">Villages needed</th>
+            <th className="num">Delivered at {countText}</th>
+            <th className="num">Leftover</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {WCI.map((r) => {
+            const p = match.per[r]
+            return (
+              <tr key={r}>
+                <td className={`res-${r}`}>{r}</td>
+                <td className="num">{fmt(p.demand)}</td>
+                <td className="num">{fmt(p.own)}</td>
+                <td className={`num ${p.imported > 0 ? 'neg' : 'pos'}`}>
+                  {p.imported > 0 ? fmt(p.imported) : <span className="zero">—</span>}
+                </td>
+                <td className="num">{fmt(p.each)}</td>
+                <td className="num">{Number.isFinite(p.villages) ? fmt(p.villages, 2) : '∞'}</td>
+                <td className="num">{Number.isFinite(p.supplied) ? fmt(p.supplied) : '—'}</td>
+                <td className={`num ${p.leftover < 0 ? 'neg' : 'pos'}`}>
+                  {Number.isFinite(p.leftover) ? `${p.leftover > 0 ? '+' : ''}${fmt(p.leftover)}` : '—'}
+                </td>
+                <td>{p.binding && <span className="chip bad">binds</span>}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td><b>Total</b></td>
+            <td className="num"><b>{fmt(match.demand)}</b></td>
+            <td className="num">{fmt(capOut.total)}</td>
+            <td className="num"><b>{fmt(match.imported)}</b></td>
+            <td className="num">{fmt(supOut.total)}</td>
+            <td className="num"><b>{countText}</b></td>
+            <td className="num">
+              {Number.isFinite(match.count) ? fmt(match.count * supOut.total) : '—'}
+            </td>
+            <td className={`num ${match.leftover > 0 ? 'neg' : 'pos'}`}>
+              <b>{Number.isFinite(match.leftover) ? fmt(match.leftover) : '—'}</b>
+            </td>
+            <td />
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  )
 }
 
 export default function Production({ villages, troops, settings, routes, bonuses, setVillage }) {
@@ -731,6 +1076,19 @@ export default function Production({ villages, troops, settings, routes, bonuses
             </table>
           </div>
         </>
+      )}
+
+      {/* Target state, not current state — so it stands outside the gate above:
+          the question is what to build towards, which is worth asking before a
+          single queue has a unit in it. */}
+      {villages.length > 0 && (
+        <SupportPlanner
+          villages={villages}
+          troops={troops}
+          settings={settings}
+          bonuses={bonuses}
+          tribe={tribe}
+        />
       )}
     </div>
   )
