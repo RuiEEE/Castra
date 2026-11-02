@@ -140,6 +140,19 @@ Full editable knowledge base: `GAME_DATA.md`.
   export — the owner's one trough village (L15) is the only one where EL eat 1 and EI eat 2, and
   its Equites Caesaris are undiscounted.
   This matters — it takes EC from 45 to 60 att/crop, the difference between a luxury and a real unit.
+- **The trough ALSO cuts cavalry TRAINING TIME, 1% per level** (`calc.troughTimeFactor`, applied in
+  `trainTimeSeconds` to the Stable and the Great Stable, in the village holding the trough). Missed
+  until 2026-11-02, when the owner's own figures gave it away: Stable 20 + trough 15 trains an
+  Equites Imperatoris in **4m55s** and an Equites Caesaris in **6m33s**, where the model said 5m48s /
+  7m44s. Both short by the SAME factor (0.8272 / 0.8265) — so a stable modifier, not a unit one — and
+  at fealty 17 the residue is 15.2% at trough 15. **OPEN: only level 15 is measured**, so the
+  straight line through one point could just as well be a tiered schedule like the crop tiers.
+  Get a second trough level before trusting the shape.
+- **The game FLOORS training time to whole seconds; the model doesn't**, which is why it lands ~1s
+  above the game every time: Praetorian 185.8s vs 3m05s, EI 295.6s vs 4m55s, EC 394.1s vs 6m33s.
+  `floor(baseTrain * 0.9^(L-1))` then the bonus factors reproduces both cavalry figures exactly.
+  Deliberately not modelled — three data points agree, but where in the chain the game truncates is
+  still inferred.
 - **Fealty level 20 gives −4% troop crop consumption** (`calc.fealtyCropFactor`, owner-confirmed
   2026-09-03). Unlike fealty's cost/time lines it does NOT scale — it is flat and only at the last
   level. The game credits it as one line on the village crop-balance screen, worth 4% of that

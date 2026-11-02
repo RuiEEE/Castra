@@ -210,6 +210,30 @@ export function merchantBudget(villages, routes) {
 // listed upkeep. No tribe argument is needed — the id lookup is the guard.
 const TROUGH_TIER = { eq_legati: 15, eq_imperatoris: 15, eq_caesaris: 20 }
 
+// The trough ALSO cuts cavalry TRAINING TIME, in the village that has it, and
+// the app missed this until the owner's own figures gave it away (2026-11-02):
+// with a Stable 20 and a trough 15 the game trains an Equites Imperatoris in
+// 4m55s and an Equites Caesaris in 6m33s, where the model said 5m48s / 7m44s.
+// Both are short by the SAME factor (0.8272 / 0.8265), so it is a modifier on
+// the stable, not on a unit — and at fealty 17 (the owner's, which the app's own
+// 5.8m implies) the residue is 15.2% at trough 15, i.e. 1% per level.
+//
+// Flooring the level curve to whole seconds first makes both times land exactly:
+// floor(2640 * 0.9^19) = 356 -> 356 * 0.975 * 0.85 = 295.0s, and
+// floor(3520 * 0.9^19) = 475 -> 475 * 0.975 * 0.85 = 393.6s. Not modelled — the
+// app keeps fractional seconds everywhere — but it is why the figures land a
+// second apart rather than exactly.
+//
+// OPEN: only level 15 is measured. The 1%-per-level shape is the straight line
+// through that one point, so a tiered schedule (like the crop tiers above) would
+// fit it just as well. Get a second trough level before trusting it.
+export const TROUGH_TIME_PER_LEVEL = 1
+
+export function troughTimeFactor(village) {
+  const lvl = village?.troughLevel || 0
+  return Math.max(0, 1 - (TROUGH_TIME_PER_LEVEL * lvl) / 100)
+}
+
 export function effectiveUpkeep(troopDef, village) {
   let up = troopDef.upkeep
   const tier = TROUGH_TIER[troopDef.id]
@@ -1037,7 +1061,10 @@ export function trainTimeSeconds(troopDef, village, settings, bonuses = NO_BONUS
   const hero = bonuses.heroVillageId && village.id === bonuses.heroVillageId
     ? (bonuses.heroTimeFactor?.[b] ?? 1)
     : 1
-  return (troopDef.baseTrain * factor * empire * hero) / settings.serverSpeed
+  // The Horse Drinking Trough cuts cavalry training time in the village holding
+  // it — and so also the Great Stable, which borrows the stable's bonus lines.
+  const trough = b === 'stable' ? troughTimeFactor(village) : 1
+  return (troopDef.baseTrain * factor * empire * hero * trough) / settings.serverSpeed
 }
 
 // --- Trade routing ----------------------------------------------------------

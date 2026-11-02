@@ -1,8 +1,16 @@
 import { useState } from 'react'
 
-export const VERSION = '1.0.9'
+export const VERSION = '1.0.10'
 
 const CHANGELOG = [
+  {
+    version: '1.0.10',
+    changes: [
+      'Cavalry trained far faster in game than the app said, and the Horse Drinking Trough is why: besides taking crop off cavalry upkeep, it cuts cavalry training time by 1% per level in the village that has it. A Stable 20 with a trough 15 now reads 4m56s for an Equites Imperatoris where it said 5m48s.',
+      'The cut applies to the Great Stable too, which borrows the stable\'s bonus lines, and only in the village holding the trough.',
+      'Only trough level 15 has been measured, so the per-level figure is a straight line through one point — a second trough level would confirm or correct it.',
+    ],
+  },
   {
     version: '1.0.9',
     changes: [
