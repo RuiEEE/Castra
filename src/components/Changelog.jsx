@@ -1,8 +1,17 @@
 import { useState } from 'react'
 
-export const VERSION = '1.0.10'
+export const VERSION = '1.0.11'
 
 const CHANGELOG = [
+  {
+    version: '1.0.11',
+    changes: [
+      '"Support → offensive" moved below the standing routes: what you have already set up is the record, and the panel is only a suggestion.',
+      'A village whose route already carries everything it can spare drops out of the table into a line underneath, so the table reads as what is still to do.',
+      'It comes back on its own the moment the plan moves away from the route — a levelled field, a new oasis, or a Town Hall that shortens the celebration and eats more of the crop.',
+      'A village short of merchants stays in the table even with the right route running, because the merchants it lacks are the next thing to build.',
+    ],
+  },
   {
     version: '1.0.10',
     changes: [

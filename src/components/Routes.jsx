@@ -187,6 +187,27 @@ function RouteImport({ villages, wonders, tribe, settings, routes, addRoute, upd
   )
 }
 
+// Is the route already in place the one this panel would write? Compared on the
+// departure interval and the whole load, within a couple of per cent, because a
+// route typed by hand lands on round numbers the planner never would.
+//
+// This is what takes a village OUT of the table: the panel answers what still
+// needs setting up, so a village already shipping everything it can spare drops
+// to a line underneath. It comes back by itself the moment the plan moves away
+// from the route — a levelled field, a new oasis, or a Town Hall that shortens
+// the party and eats more of the crop.
+function matchesPlan(existing, plan) {
+  if (!existing || !plan || plan.blocked) return false
+  // A village whose marketplace can't crew its whole surplus is never "done",
+  // even with the right route running: the merchants it is short of are the
+  // next thing to build, so it stays in the table saying so.
+  if (plan.capped) return false
+  if ((existing.interval || 1) !== plan.interval) return false
+  const current = routeRates(existing)
+  const drift = RESOURCES.reduce((s, r) => s + Math.abs((current[r] || 0) - (plan.rates[r] || 0)), 0)
+  return drift <= Math.max(1, plan.rate * 0.02)
+}
+
 // One click per support village: the route that ships everything it can spare to
 // the village that trains the army.
 //
@@ -221,15 +242,14 @@ function SupportRoutes({ villages, settings, routes, tribe, balances, addRoute, 
       const existing = routes.find((r) => r.fromId === v.id && r.toId === target.id)
       const sendable = supportSendable(balances[v.id], reserve, existing ? routeRates(existing) : {})
       const budget = (budgets.get(v.id) || 0) + (existing?.merchants || 0)
-      return {
-        v, reserve, target, options, existing, sendable, budget,
-        plan: reserve.growing ? null : supportRoute(v, target, sendable, budget, tribe, settings),
-      }
+      const plan = reserve.growing ? null : supportRoute(v, target, sendable, budget, tribe, settings)
+      return { v, reserve, target, options, existing, sendable, budget, plan, covered: matchesPlan(existing, plan) }
     })
   }, [villages, offensive, routes, balances, settings, tribe, empireCP, picked, budgets])
 
-  const shippers = rows.filter((r) => !r.reserve.growing)
+  const shippers = rows.filter((r) => !r.reserve.growing && !r.covered)
   const growing = rows.filter((r) => r.reserve.growing)
+  const covered = rows.filter((r) => r.covered)
   const ready = shippers.filter((r) => r.plan && !r.plan.blocked)
 
   const commit = (list) => {
@@ -275,7 +295,11 @@ function SupportRoutes({ villages, settings, routes, tribe, balances, addRoute, 
         )}
       </div>
       {shippers.length === 0 ? (
-        <div className="empty">No support village has reached Town Hall 10 yet.</div>
+        <div className="empty">
+          {covered.length > 0
+            ? 'Every support village is already shipping everything it can spare.'
+            : 'No support village has reached Town Hall 10 yet.'}
+        </div>
       ) : (
         <table className="grid">
           <thead>
@@ -351,6 +375,12 @@ function SupportRoutes({ villages, settings, routes, tribe, balances, addRoute, 
           </tbody>
         </table>
       )}
+      {covered.length > 0 && (
+        <div className="note" style={{ marginTop: 10 }}>
+          Already shipping everything spare:{' '}
+          {covered.map((r) => `${r.v.name} → ${r.target.name}`).join(' · ')}
+        </div>
+      )}
       {growing.length > 0 && (
         <div className="note" style={{ marginTop: 10 }}>
           Still growing, keeping their own production:{' '}
@@ -416,11 +446,6 @@ export default function Routes({ villages, troops, settings, routes, bonuses, ad
           <div className="s">of {fmt(totalMerchants)} · {fmt(Math.max(0, totalMerchants - usedMerchants))} still free</div>
         </div>
       </div>
-
-      <SupportRoutes
-        villages={villages} settings={settings} routes={list} tribe={tribe}
-        balances={balances} addRoute={addRoute} updateRoute={updateRoute}
-      />
 
       <div className="panel-head">
         <h2>Routes</h2>
@@ -542,6 +567,11 @@ export default function Routes({ villages, troops, settings, routes, bonuses, ad
           </table>
         )}
       </div>
+
+      <SupportRoutes
+        villages={villages} settings={settings} routes={list} tribe={tribe}
+        balances={balances} addRoute={addRoute} updateRoute={updateRoute}
+      />
     </div>
   )
 }
