@@ -55,6 +55,27 @@ Adds 20% of base capacity per level. Romans' effective schedule:
 
 Formula in code: `capacity = base × (1 + 0.20 × tradeOffice)` — value `tradeOfficeBonusPerLevel: 0.20`.
 
+### Prerequisites — CONFIRMED (owner, 2026-10-18)
+
+**Trade Office ← Marketplace 20 + Stable 10. Stable ← Smithy 3.** In `cultureData.PREREQS`
+as gids `28: [[17,20],[20,10]]` and `20: [[13,3]]`.
+
+The chain costs **207,920** resources before Trade Office level 1 (Smithy 0→3 4,270 ·
+Stable 0→10 35,620 · Marketplace 0→20 168,030) and yields 130 CP/day, which breaks even
+against a small celebration's 40.66 res/CP in **39 days** — so the chain is worth building
+for culture alone, even where no merchant ever leaves.
+
+The Trade Office itself is a **shipping buy, never a CP buy**: cumulative 37,665 at L5,
+167,100 at L10, **2,139,940 at L20** (≈26 days of a support village's entire 90k/day
+output), breaking even as culture in 132 / 216 / 505 days.
+
+**Recommended: Trade Office 5.** Range for one support village's full 3,750/h inside the
+20 merchants a marketplace can hold is 16 fields at TO0, **40 at TO5**, 64 at TO10, 80 at
+TO15 — and the furthest two tiles can be on a radius-60 map is 84.9 fields, so TO15+ buys
+range that does not exist. Levels pay off in **jumps**, because `bestRouteCost` rounds the
+convoy up to whole merchants: at 3,750/h, levels 2/4/6/8 add no range at all over the level
+below. `calc.supportShipping` reports `sameAt`, the lowest level that ships the same load.
+
 ## Modelling assumptions
 
 - Population eats **1 crop/hr** each (confirmed ON for this world).

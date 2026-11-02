@@ -529,6 +529,9 @@ export function emptyVillage(n = 1) {
     y: 0,
     capital: false,
     kind: 'village', // 'village' (fields max 10) | 'city' (max 12); capital is uncapped
+    // Trains the army: the destination a support village ships to. Any number of
+    // villages can be marked, and an offensive village never ships out itself.
+    offensive: false,
     population: 0,
     // Culture points: account-wide totals, accrued per village. Filled by the
     // game export; the Culture Points tab sums them empire-wide.

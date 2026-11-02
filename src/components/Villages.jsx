@@ -61,6 +61,7 @@ function VillageCard({
         {v.capital
           ? <span className="crown">CAPITAL</span>
           : v.kind === 'city' && <span className="crown">CITY</span>}
+        {v.offensive && <span className="crown" title="Offensive village — support villages ship here">ARMY</span>}
         <span className="coord">{v.x}|{v.y}</span>
         <button className="btn ghost" onClick={onOpen} style={{ padding: '4px 10px' }}>Edit</button>
       </div>
@@ -451,6 +452,10 @@ function VillageEditor({ v, villages, troops, settings, delta, bonuses, onEdit, 
             <label className="field fit" style={{ display: 'flex', gap: 8, alignItems: 'center', alignSelf: 'flex-end' }}>
               <input type="checkbox" checked={!!v.capital} onChange={(e) => onEdit({ capital: e.target.checked })} />
               <span>Capital (uncapped)</span>
+            </label>
+            <label className="field fit" style={{ display: 'flex', gap: 8, alignItems: 'center', alignSelf: 'flex-end' }}>
+              <input type="checkbox" checked={!!v.offensive} onChange={(e) => onEdit({ offensive: e.target.checked })} />
+              <span>Offensive (support villages ship here)</span>
             </label>
           </div>
         </div>

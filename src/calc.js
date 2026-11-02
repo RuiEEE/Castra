@@ -1461,6 +1461,98 @@ export function celebrationBudget(villages, troops, settings, treasuresDaily = 0
   }
 }
 
+// --- Support villages -> the offensive village ------------------------------
+// A support village has one job: keep its own celebration running back to back
+// and send everything else to the village that trains the army.
+//
+// The offensive village is a sink with NO ceiling (owner, 2026-11-02): it trains
+// 24/7 AND is still levelling its own fields and buildings, so resources there
+// are never too many. That is why a support route is sized by what the support
+// village can spare, never by what the offensive village is short of — the
+// opposite of how `cropPlan` and `trainingPlan` size a delivery.
+
+// The margin on the celebration reserve, so a support village can still train a
+// few units of its own now and then. Kingdoms charges no crop for units, so the
+// crop tenth is pure buffer rather than unit money.
+export const CELEBRATION_MARGIN = 1.10
+
+// What a village has to hold back to keep a celebration running continuously —
+// one party every `partyHours`, which IS the party's own length, so the reserve
+// is just its cost spread over that length, plus the margin.
+//
+// Below Town Hall 10 there is no large celebration and the village is NOT a
+// shipper at all (owner, 2026-11-02): a Town Hall that low means it has not
+// reached its final state and still needs its own production for its fields and
+// buildings — and its small party would not even reach the 500 CP cap. The
+// small-party figures are returned for reference; `growing` is the flag that
+// says not to route from it.
+export function celebrationReserve(village, settings, empireCP, margin = CELEBRATION_MARGIN) {
+  const th = townHallLevel(village)
+  const large = th >= LARGE_PARTY_MIN_TOWN_HALL
+  const mode = th < 1 ? 'none' : large ? 'large' : 'small'
+  const cpSource = large ? empireCP : (village.culturePointProduction || 0)
+  const drain = mode === 'none' ? null : celebrationDrain(mode, th, cpSource)
+  const table = large ? LARGE_PARTY_SECONDS : SMALL_PARTY_SECONDS
+  const seconds = mode === 'none' ? 0 : (table[Math.min(th, table.length) - 1] || 0)
+  const perDay = {}
+  const perHour = {}
+  for (const r of RESOURCES) {
+    perDay[r] = (drain?.[r] || 0) * margin
+    perHour[r] = perDay[r] / 24
+  }
+  return {
+    th, mode, margin, growing: !large,
+    partyHours: seconds / 3600,
+    cpPerDay: drain?.cpPerDay || 0,
+    perDay, perHour,
+    total: WCI.reduce((s, r) => s + perDay[r], 0),
+  }
+}
+
+// What a finished support village can actually put on the road, per hour: its
+// real position in each resource — production less its queues, less crop upkeep
+// and population, and after every route it already runs in both directions —
+// minus the celebration reserve.
+//
+// `giveBack` adds a route's own load back in first. The balance already has that
+// route subtracted, so replacing it without this would charge the village twice
+// for the same shipment; it is the same correction `RouteForm` makes while
+// editing a route.
+export function supportSendable(balance, reserve, giveBack = {}) {
+  const per = {}
+  for (const r of RESOURCES) {
+    per[r] = Math.max(0, (balance?.[r] || 0) + (giveBack[r] || 0) - (reserve.perHour[r] || 0))
+  }
+  return { per, total: RESOURCES.reduce((s, r) => s + per[r], 0) }
+}
+
+// The route the shortcut would create: every spare resource in ONE convoy at the
+// cheapest departure interval. Merchant capacity is shared across the load, so
+// the convoy is costed on the total and crop rides with the wood.
+//
+// When the marketplace cannot staff the whole surplus, `planLeg` finds the most
+// it CAN move inside `budget` and every resource is scaled down to fit, because
+// a smaller route that leaves on time beats one the village cannot crew. The
+// caller gets `capped` and `wanted` so the shortfall stays visible.
+export function supportRoute(source, target, sendable, budget, tribe, settings) {
+  if (!source || !target || sendable.total <= 0) return null
+  const travel = travelHours(source, target, tribe, settings)
+  const capacity = merchantCapacity(source, tribe, settings)
+  const full = bestRouteCost(travel, capacity, sendable.total)
+  const fits = full.merchants <= budget
+  const leg = fits ? { ...full, rate: sendable.total } : planLeg(travel, capacity, sendable.total, budget)
+  // No interval at all fits the budget: even one merchant can't cover a set.
+  if (!leg) return { travel, capacity, blocked: true, wanted: full.merchants, budget, rates: {} }
+  const scale = Math.min(1, leg.rate / sendable.total)
+  const rates = {}
+  for (const r of RESOURCES) if (sendable.per[r] > 0) rates[r] = sendable.per[r] * scale
+  return {
+    travel, capacity, blocked: false, rates,
+    interval: leg.interval, merchants: leg.merchants, sets: leg.sets,
+    rate: leg.rate, capped: !fits, wanted: full.merchants, budget,
+  }
+}
+
 // Cost and CP gain of taking a CP-producing building from one level to another.
 // `cost[i]` reaches level i+1, `cp[i]` is the CP/day AT level i+1, so a jump
 // from `from` to `to` costs the slice cost[from..to-1] and adds cp[to-1] minus

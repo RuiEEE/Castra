@@ -4,6 +4,7 @@ import {
   routeRates, routeTotal, routeCost, routeSchedule, RESOURCES, MAX_ROUTE_INTERVAL,
   wonderTargets, villageBalances, travelHours, merchantCapacity, merchantCount,
   committedMerchants, byName, fmt, fmtHours,
+  celebrationReserve, supportSendable, supportRoute, merchantBudget, empireCulture,
 } from '../calc'
 import { parseTradeRoutes } from '../gameImport'
 import RouteForm, { everyText } from './RouteForm'
@@ -186,6 +187,186 @@ function RouteImport({ villages, wonders, tribe, settings, routes, addRoute, upd
   )
 }
 
+// One click per support village: the route that ships everything it can spare to
+// the village that trains the army.
+//
+// The sizing is deliberately one-sided. A support village keeps a celebration
+// running back to back — one party every `partyHours`, plus a tenth so it can
+// still train a few units of its own — and everything left over goes on the
+// road, crop included, because an offensive village trains 24/7 while still
+// levelling its own fields and never has too much. So this panel never asks
+// what the destination needs; it only asks what the source can let go of.
+//
+// A village below Town Hall 10 is not a shipper. It has not reached its final
+// state and needs its own production for its fields and buildings, so it is
+// listed apart rather than routed from.
+function SupportRoutes({ villages, settings, routes, tribe, balances, addRoute, updateRoute }) {
+  const [picked, setPicked] = useState({})
+  const [done, setDone] = useState(null)
+
+  const offensive = useMemo(() => villages.filter((v) => v.offensive), [villages])
+  const empireCP = useMemo(() => empireCulture(villages).production, [villages])
+  // What each marketplace still has free, before this panel's own route is
+  // replaced — a route being redrawn hands its merchants back first.
+  const budgets = useMemo(() => merchantBudget(villages, routes), [villages, routes])
+
+  const rows = useMemo(() => {
+    if (!offensive.length) return []
+    return [...villages].filter((v) => !v.offensive).sort(byName).map((v) => {
+      const reserve = celebrationReserve(v, settings, empireCP)
+      // Nearest offensive village by default: the closest leg moves the most
+      // per merchant. Any of them can be chosen per row.
+      const options = [...offensive].sort((a, b) => travelHours(v, a, tribe, settings) - travelHours(v, b, tribe, settings))
+      const target = offensive.find((o) => String(o.id) === String(picked[v.id])) || options[0]
+      const existing = routes.find((r) => r.fromId === v.id && r.toId === target.id)
+      const sendable = supportSendable(balances[v.id], reserve, existing ? routeRates(existing) : {})
+      const budget = (budgets.get(v.id) || 0) + (existing?.merchants || 0)
+      return {
+        v, reserve, target, options, existing, sendable, budget,
+        plan: reserve.growing ? null : supportRoute(v, target, sendable, budget, tribe, settings),
+      }
+    })
+  }, [villages, offensive, routes, balances, settings, tribe, empireCP, picked, budgets])
+
+  const shippers = rows.filter((r) => !r.reserve.growing)
+  const growing = rows.filter((r) => r.reserve.growing)
+  const ready = shippers.filter((r) => r.plan && !r.plan.blocked)
+
+  const commit = (list) => {
+    for (const row of list) {
+      const route = {
+        fromId: row.v.id,
+        toId: row.target.id,
+        wwId: null,
+        rates: row.plan.rates,
+        interval: row.plan.interval,
+        merchants: row.plan.merchants,
+      }
+      if (row.existing) updateRoute(row.existing.id, route)
+      else addRoute(route)
+    }
+    setDone({
+      added: list.filter((r) => !r.existing).length,
+      updated: list.filter((r) => r.existing).length,
+    })
+  }
+
+  if (!offensive.length) {
+    return (
+      <div className="panel">
+        <div className="panel-head"><h2>Support → offensive</h2></div>
+        <div className="empty">
+          No offensive village marked yet. Open the one that trains your army and tick
+          <strong> Offensive</strong> — support villages ship there.
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <h2>Support → offensive</h2>
+        <span className="spacer" />
+        {ready.length > 1 && (
+          <button className="btn" type="button" onClick={() => commit(ready)}>
+            Set up all {ready.length}
+          </button>
+        )}
+      </div>
+      {shippers.length === 0 ? (
+        <div className="empty">No support village has reached Town Hall 10 yet.</div>
+      ) : (
+        <table className="grid">
+          <thead>
+            <tr>
+              <th>Support village</th><th>Ships to</th>
+              <th className="num">Celebration</th><th className="num">Reserved /day</th>
+              {RESOURCES.map((r) => <th key={r} className="num">{r}/h</th>)}
+              <th className="num">Merchants</th><th />
+            </tr>
+          </thead>
+          <tbody>
+            {shippers.map(({ v, reserve, target, options, existing, sendable, plan, budget }) => (
+              <tr key={v.id}>
+                <td>
+                  {v.name}
+                  {v.capital && <span className="chip gold" style={{ marginLeft: 6 }}>cap</span>}
+                </td>
+                <td>
+                  {options.length > 1 ? (
+                    <select value={target.id} onChange={(e) => setPicked({ ...picked, [v.id]: e.target.value })}>
+                      {options.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                    </select>
+                  ) : target.name}
+                  {plan && <span className="rsub"> {fmtHours(plan.travel)} one way</span>}
+                </td>
+                <td className="num">
+                  {reserve.mode === 'large' ? 'large' : 'small'}
+                  <span className="rsub"> every {fmtHours(reserve.partyHours)}</span>
+                </td>
+                <td className="num">
+                  {fmt(reserve.total)}
+                  <span className="rsub"> + {fmt(reserve.perDay.crop)} crop</span>
+                </td>
+                {RESOURCES.map((res) => (
+                  <td key={res} className={`num ${sendable.per[res] > 0 ? `res-${res}` : ''}`}>
+                    {sendable.per[res] > 0 ? (
+                      <>
+                        {fmt(sendable.per[res])}
+                        {plan && !plan.blocked && (
+                          <span className="rsub"> {fmt(Math.round((plan.rates[res] || 0) * plan.interval))}/trip</span>
+                        )}
+                      </>
+                    ) : '—'}
+                  </td>
+                ))}
+                <td className="num">
+                  {plan && !plan.blocked ? (
+                    <>
+                      {fmt(plan.merchants)}
+                      <span className="rsub"> {everyText(plan.interval)}</span>
+                      {plan.capped && (
+                        <span className="chip bad" style={{ marginLeft: 6 }}
+                          title={`The whole surplus wants ${fmt(plan.wanted)} merchants; ${v.name} has ${fmt(budget)} free, so the load is cut to fit`}>
+                          {fmt(plan.wanted - plan.merchants)} short
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="chip bad" title={plan ? `Needs ${fmt(plan.wanted)} merchants, ${fmt(budget)} free` : undefined}>
+                      {plan ? 'no merchants free' : 'nothing spare'}
+                    </span>
+                  )}
+                </td>
+                <td className="num" style={{ whiteSpace: 'nowrap' }}>
+                  <button className="btn ghost" type="button"
+                    disabled={!plan || plan.blocked}
+                    onClick={() => commit([{ v, target, existing, plan }])}>
+                    {existing ? 'Update route' : 'Set up route'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {growing.length > 0 && (
+        <div className="note" style={{ marginTop: 10 }}>
+          Still growing, keeping their own production:{' '}
+          {growing.map((r) => `${r.v.name} (Town Hall ${r.reserve.th})`).join(' · ')}
+        </div>
+      )}
+      {done && (
+        <div className="alert good" style={{ marginTop: 10 }}>
+          {done.added} route{done.added === 1 ? '' : 's'} set up
+          {done.updated > 0 ? `, ${done.updated} updated` : ''}. Now set the same up in game.
+        </div>
+      )}
+    </div>
+  )
+}
+
 const ratioText = (ratio) => `${fmt(Math.round(Math.abs(ratio - 1) * 100))}% ${ratio > 1 ? 'faster' : 'slower'}`
 
 export default function Routes({ villages, troops, settings, routes, bonuses, addRoute, updateRoute, removeRoute }) {
@@ -235,6 +416,11 @@ export default function Routes({ villages, troops, settings, routes, bonuses, ad
           <div className="s">of {fmt(totalMerchants)} · {fmt(Math.max(0, totalMerchants - usedMerchants))} still free</div>
         </div>
       </div>
+
+      <SupportRoutes
+        villages={villages} settings={settings} routes={list} tribe={tribe}
+        balances={balances} addRoute={addRoute} updateRoute={updateRoute}
+      />
 
       <div className="panel-head">
         <h2>Routes</h2>

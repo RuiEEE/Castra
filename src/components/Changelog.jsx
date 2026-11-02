@@ -1,8 +1,18 @@
 import { useState } from 'react'
 
-export const VERSION = '1.0.8'
+export const VERSION = '1.0.9'
 
 const CHANGELOG = [
+  {
+    version: '1.0.9',
+    changes: [
+      'Routes tab: "Support → offensive" turns a support village\'s spare production into a standing route in one click. Tick Offensive on the village that trains your army — as many as you like — and every other village is costed against the nearest one.',
+      'A support village holds back what a celebration costs to run back to back — one party every party-length, plus a tenth so it can still train a few units of its own — and ships everything else, crop included, because a village that trains around the clock while still levelling its own fields never has too much.',
+      'What it can spare is its real position: production less its queues, its crop upkeep and its population, and after every route it already runs in both directions. Pressing the button again never ships the same resources twice.',
+      'Where the marketplace cannot crew the whole surplus, the load is cut to what it can carry and the shortfall is named, instead of planning a convoy the village cannot staff.',
+      'A village below Town Hall 10 is left out and said so: it has not reached its final state yet and needs its own production for its fields and buildings.',
+    ],
+  },
   {
     version: '1.0.8',
     changes: [

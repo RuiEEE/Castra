@@ -98,6 +98,14 @@ Senator/Settler speed confirmed in-game: **8 / 10** (article-page values, not th
 table's 4/5). Conflict flags dropped. Trade Office confirmed: 20% base, Romans reach 2×
 capacity at level 5, 3× at 10, 4× at 15, 5× at 20 — matches `tradeOfficeBonusPerLevel: 0.20`.
 
+**Trade Office prerequisites (owner-confirmed 2026-10-18): Marketplace 20 + Stable 10, and the
+Stable itself needs Smithy 3** (`cultureData.PREREQS` gids 28 and 20). That chain is 207,920
+resources before Trade Office level 1, so a support village DOES want a Stable and Smithy after
+all — they pay for themselves in culture points in ~39 days. The Trade Office is a shipping buy,
+never a CP buy, and **level 5 is the target, not 20**: L20 costs 2,139,940 (~26 days of a support
+village's whole output) for range beyond the map's 84.9-field diameter, and its levels pay off in
+jumps — at 3,750/h, levels 2/4/6/8 buy no extra range at all. Full tables in `GAME_DATA.md`.
+
 Full editable knowledge base: `GAME_DATA.md`.
 
 ### Open questions — ask the owner, don't guess
@@ -207,6 +215,19 @@ Full editable knowledge base: `GAME_DATA.md`.
   per carried resource before you commit it — when editing it adds the route's own rates back first,
   or the projection charges the village twice. **"N missing"** = the route needs more merchants than
   the marketplace has.
+- **A support route is sized by its SOURCE, never by its destination** (owner, 2026-11-02). A village
+  marked `offensive` trains 24/7 *and* is still levelling its own fields and buildings, so resources
+  there are never too many — the opposite of `cropPlan`/`trainingPlan`, which size a delivery by what
+  the destination lacks. So `calc.supportSendable` = the village's real balance (production − queues −
+  crop upkeep − population, after every route it already runs) minus `calc.celebrationReserve`: the
+  cost of running its celebration back to back, one party every party-length, times
+  `CELEBRATION_MARGIN` (1.10, so it can still train a few units; crop's tenth is pure buffer since
+  units cost no crop). Crop RIDES ALONG — the offensive village goes crop-negative as its army grows.
+  `village.offensive` is a flag any number of villages can carry; an offensive village never ships out.
+  **Below Town Hall 10 a village is not a shipper at all** — no large celebration means it has not
+  reached its final state and needs its own production, so it is listed apart, not routed from.
+  `calc.supportRoute` falls back to `planLeg` when the marketplace can't crew the whole surplus and
+  scales every resource down together rather than planning a convoy that can't leave.
 - **Current stored resources are not tracked.** They change by the minute, so the app models rates
   (per hour / per day), not balances. When a decision needs actual stock ("I want to build X, here
   is what I have"), the numbers get entered at that moment. Don't reintroduce a `stored` field.
