@@ -424,10 +424,6 @@ export function heroItemValue(equipped) {
   return { def, value: def.base + (equipped.variant || 0) + (equipped.upgrades || 0) }
 }
 
-// The marketplace tops out at level 20, and its level IS the merchant count, so
-// 20 is the most merchants one village can ever put on the road.
-export const MARKETPLACE_LEVEL_MAX = 20
-
 // Max resource-field level by village kind. Capital is effectively uncapped;
 // the production table tops out at 20, so use that as the practical ceiling.
 export const FIELD_LEVEL_MAX = { village: 10, city: 12, capital: 20 }
